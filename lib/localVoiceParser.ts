@@ -146,6 +146,25 @@ function parseNumberPhrase(value: string): number | null {
   return total + current + (half ? 0.5 : 0);
 }
 
+const NUMBER_WORDS = new Set<string>([
+  ...Object.keys(SMALL_NUMBERS),
+  ...Object.keys(TENS),
+  ...Object.keys(ORDINALS),
+  'hundred',
+  'thousand',
+  'half',
+  'and',
+  'a',
+]);
+
+function trailingNumberPhrase(group: string): string | null {
+  const tokens = group.split(/\s+/).filter(Boolean);
+  let i = tokens.length - 1;
+  while (i >= 0 && NUMBER_WORDS.has(tokens[i])) i--;
+  const phrase = tokens.slice(i + 1).join(' ');
+  return phrase || null;
+}
+
 function parseDate(transcript: string, now: Date): string | null {
   const text = transcript.toLowerCase();
   if (/\byesterday\b/.test(text)) {
@@ -226,20 +245,34 @@ function parseHours(transcript: string): number | null {
     if (hours !== null && minutes !== null && minutes < 60) return hours + minutes / 60;
   }
 
-  const minutesOnly = text.match(
-    /(?:worked|took|spent)?\s*(?:for\s+)?([\w.-]+(?:\s+[\w.-]+){0,3})\s+minutes?\b/
-  );
-  if (minutesOnly) {
-    const minutes = parseNumberPhrase(minutesOnly[1]);
-    if (minutes !== null && minutes > 0) return minutes / 60;
+  const words = text.replace(/[^a-z0-9\s.-]/g, ' ').split(/\s+/).filter(Boolean);
+  const isNumberToken = (token: string) => NUMBER_WORDS.has(token) || /^\d+(?:\.\d+)?$/.test(token);
+  const isRateUnit = (token: string) => /^(?:per|an|each)$/.test(token);
+
+  for (let i = 0; i < words.length; i++) {
+    if (!/^minutes?$/.test(words[i])) continue;
+    let j = i - 1;
+    const collected: string[] = [];
+    while (j >= 0 && isNumberToken(words[j])) {
+      collected.unshift(words[j]);
+      j--;
+    }
+    if (collected.length === 0 || (j >= 0 && isRateUnit(words[j]))) continue;
+    const minutes = parseNumberPhrase(collected.join(' '));
+    if (minutes !== null && minutes > 0 && minutes < 60) return minutes / 60;
   }
 
-  const explicit = text.match(
-    /(?:worked|took|spent)?\s*(?:for\s+)?([\w.-]+(?:\s+[\w.-]+){0,5})\s+(?:hours?|hrs?)\b/
-  );
-  if (explicit) {
-    const hours = parseNumberPhrase(explicit[1]);
-    if (hours !== null && hours <= 24) return hours;
+  for (let i = 0; i < words.length; i++) {
+    if (!/^hours?$/.test(words[i])) continue;
+    let j = i - 1;
+    const collected: string[] = [];
+    while (j >= 0 && isNumberToken(words[j])) {
+      collected.unshift(words[j]);
+      j--;
+    }
+    if (collected.length === 0 || (j >= 0 && isRateUnit(words[j]))) continue;
+    const hours = parseNumberPhrase(collected.join(' '));
+    if (hours !== null && hours > 0 && hours <= 24) return hours;
   }
 
   const arrivedRange = text.match(
@@ -263,7 +296,7 @@ function parseHours(transcript: string): number | null {
 
 function parseRate(transcript: string): number | null {
   const text = transcript.toLowerCase();
-  const hourlyRateClause = text.match(/hourly\s+rate(?:\s+is|\s+was|\s+of)?\s+(.{1,60}?)\s+dollars?\b/);
+  const hourlyRateClause = text.match(/hourly\s+rate(?:\s+is|\s+was|\s+of)?\s+(.{1,60}?)(?=\s+(?:materials?|parts?|supplies|total)\b|[.!?]|$)/);
   if (hourlyRateClause) {
     const corrected = hourlyRateClause[1].split(/\b(?:no|sorry|rather|correction)\b/).pop() || hourlyRateClause[1];
     const amounts = moneyAmounts(corrected);
@@ -272,7 +305,7 @@ function parseRate(transcript: string): number | null {
     if (value !== null) return value;
   }
   const rateClause = text.match(
-    /(?:hourly\s+rate|rate|charging|charge|billing|bill)(.{0,100}?)(?:dollars?\s+)?(?:an|per|each)\s+hour\b/
+    /(?:hourly\s+rate|rate|charging|charge|billing|bill)(.{0,100}?)(?:(?:dollars?|bucks?)\s+)?(?:an|per|each)\s+hour\b/
   );
   if (rateClause) {
     const corrected = rateClause[1].split(/\b(?:no|sorry|rather|correction)\b/).pop() || rateClause[1];
@@ -283,10 +316,12 @@ function parseRate(transcript: string): number | null {
   }
 
   const match = text.match(
-    /(?:rate(?:\s+is|\s+was|\s+of)?\s+)?([\w.-]+(?:\s+[\w.-]+){0,5})\s+dollars?\s+(?:an|per|each)\s+hour/
+    /(?:rate(?:\s+is|\s+was|\s+of)?\s+)?([\w.-]+(?:\s+[\w.-]+){0,5})\s+(?:dollars?|bucks?)\s+(?:an|per|each)\s+hour/
   );
   if (match) {
     const corrected = match[1].split(/\b(?:no|sorry|rather|correction)\b/).pop() || match[1];
+    const amounts = moneyAmounts(corrected + ' dollars');
+    if (amounts.length > 0) return amounts[amounts.length - 1];
     return parseNumberPhrase(corrected);
   }
   const symbol = text.match(/\$(\d+(?:\.\d+)?)\s*(?:an|per|\/)\s*hour/);
@@ -302,15 +337,22 @@ function moneyAmounts(text: string): number[] {
     (match) => Number(match[1])
   );
   if (trailingSymbols.length > 0) return trailingSymbols;
-  const numericPattern = /(?:\$\s*)?(\d+(?:\.\d+)?)\s*dollars?(?:\s+and\s+(\d+)\s*cents?)?/g;
+  const numericPattern = /(?:\$\s*)?(\d+(?:\.\d+)?)\s*(?:dollars?|bucks?)(?:\s+and\s+(\d+)\s*cents?)?/g;
   for (const match of text.matchAll(numericPattern)) {
     amounts.push(Number(match[1]) + Number(match[2] || 0) / 100);
   }
 
+  const grandPattern = /([\w.-]+(?:\s+[\w.-]+){0,5})\s+grand\b/g;
+  for (const match of text.matchAll(grandPattern)) {
+    const value = match[1].trim() === 'a' ? 1 : parseNumberPhrase(match[1]);
+    if (value !== null) amounts.push(value * 1000);
+  }
+
   if (amounts.length > 0) return amounts;
-  const wordPattern = /([a-z-]+(?:\s+[a-z-]+){0,5})\s+dollars?(?:\s+and\s+([a-z-]+(?:\s+[a-z-]+){0,3})\s+cents?)?/g;
+  const wordPattern = /([a-z-]+(?:\s+[a-z-]+){0,5})\s+(?:dollars?|bucks?)(?:\s+and\s+([a-z-]+(?:\s+[a-z-]+){0,3})\s+cents?)?/g;
   for (const match of text.matchAll(wordPattern)) {
-    const dollars = parseNumberPhrase(match[1]);
+    const numberWords = trailingNumberPhrase(match[1]);
+    const dollars = numberWords ? parseNumberPhrase(numberWords) : null;
     const cents = match[2] ? parseNumberPhrase(match[2]) : 0;
     if (dollars !== null) amounts.push(dollars + (cents || 0) / 100);
   }
@@ -323,10 +365,18 @@ function parseMaterials(transcript: string): number | null {
   if (materialStart < 0) return null;
   const materialTail = text.slice(materialStart);
   const nextSection = materialTail.slice(1).search(
-    /(?:[.!?]\s*|\s+)(?=(?:I|we)\s+(?:had|needed|arrived|started|began|worked|completed|replaced|repaired|installed|fixed|finished|ended|left)\b|(?:I(?:'m|\s+am)?\s+)?(?:charging|billing)\b|(?:my\s+)?(?:hourly\s+)?rate\b|from\s+\d)/i
+    /(?:[.!?]\s*|\s+)(?=(?:I|we)\s+(?:had|needed|arrived|started|began|worked|completed|replaced|repaired|installed|fixed|finished|ended|left)\b|(?:I(?:'m|\s+am)?\s+)?(?:charging|billing|charge|bill)\b|(?:my\s+)?(?:hourly\s+)?rate\b|(?:an|per)\s+hour\b|from\s+\d)/i
   );
   const section = nextSection >= 0 ? materialTail.slice(0, nextSection + 1) : materialTail;
   const amounts = moneyAmounts(section);
+  const forPhrase = text.match(
+    /([\w.-]+(?:\s+[\w.-]+){0,5})\s+(dollars?|bucks?|grand)\s+(?:for|in|on)\s+(?:materials?|parts?|supplies)\b/
+  );
+  if (forPhrase) {
+    let value = parseNumberPhrase(forPhrase[1]);
+    if (forPhrase[2].startsWith('grand') && value !== null) value *= 1000;
+    if (value !== null) amounts.push(value);
+  }
   if (amounts.length === 0) return null;
   return Math.round(amounts.reduce((sum, value) => sum + value, 0) * 100) / 100;
 }
@@ -339,7 +389,7 @@ function descriptionFromTranscript(transcript: string): string | null {
     .filter(Boolean);
   const workSentences = sentences.filter(
     (sentence) =>
-      !/\b(?:dollars?|rate|materials?|parts?|supplies|hours?|arrived|started|began|finished|ended|worked)\b/i.test(
+      !/\b(?:dollars?|bucks?|grand|rate|materials?|parts?|supplies|hours?|arrived|started|began|finished|ended|worked)\b/i.test(
         sentence
       )
   );
@@ -369,7 +419,9 @@ function descriptionFromTranscript(transcript: string): string | null {
     if (chosenAction?.index !== undefined) {
       selected = transcript
         .slice(chosenAction.index)
-        .split(/\b(?:my\s+)?(?:rate|materials?|parts?|supplies|total|I\s+(?:arrived|started|began|finished|ended|left)|from\s+\d)\b/i)[0]
+        .split(
+          /\b(?:my\s+)?(?:rate|materials?|parts?|supplies|total|I\s+(?:arrived|started|began|finished|ended|left)|from\s+\d|(?:for|at)\s+[\w.-]+(?:\s+[\w.-]+){0,4}\s+(?:dollars?|bucks?|grand))\b/i
+        )[0]
         .trim();
     }
   }
