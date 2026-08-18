@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import InvoiceForm from '@/components/InvoiceForm';
 import InvoicePreview, { SmsState } from '@/components/InvoicePreview';
 import ToastContainer, { ToastMessage } from '@/components/Toast';
+import { LanguageProvider, useLanguage } from '@/components/LanguageContext';
+import { t } from '@/lib/i18n';
 import {
   computeTotals,
   currency,
@@ -18,6 +20,15 @@ import { emptyInvoice, type ExtractedInvoiceFields, type InvoiceFormData, type S
 type FieldErrors = Partial<Record<keyof InvoiceFormData, string>>;
 
 export default function Home() {
+  return (
+    <LanguageProvider>
+      <HomeContent />
+    </LanguageProvider>
+  );
+}
+
+function HomeContent() {
+  const { language, setLanguage } = useLanguage();
   const [data, setData] = useState<InvoiceFormData>({ ...emptyInvoice, serviceDate: todayISO() });
   const [errors, setErrors] = useState<FieldErrors>({});
   const [autofilled, setAutofilled] = useState<Set<keyof InvoiceFormData>>(new Set());
@@ -67,13 +78,13 @@ export default function Home() {
   function validateField(field: keyof InvoiceFormData, value: string): string | undefined {
     switch (field) {
       case 'firstName':
-        return value.trim() ? undefined : 'First name is required.';
+        return value.trim() ? undefined : t(language, 'firstNameRequired');
       case 'lastName':
-        return value.trim() ? undefined : 'Last name is required.';
+        return value.trim() ? undefined : t(language, 'lastNameRequired');
       case 'email':
-        return !value.trim() || isValidEmail(value) ? undefined : 'Enter a valid email address.';
+        return !value.trim() || isValidEmail(value) ? undefined : t(language, 'emailInvalid');
       case 'phone':
-        return isValidPhone(value) ? undefined : 'Enter a valid phone number with area code.';
+        return isValidPhone(value) ? undefined : t(language, 'phoneInvalid');
       default:
         return undefined;
     }
@@ -159,15 +170,18 @@ export default function Home() {
       }
 
       if (touched.length === 0) {
-        pushToast("Didn't catch any invoice details in that — try mentioning hours, rate, or the job itself.", 'error');
+        pushToast(t(language, 'toastVoiceNothing'), 'error');
         return;
       }
 
       setData((prev) => ({ ...prev, ...patch }));
       flashAutofilled(touched);
-      pushToast(`Autofilled ${touched.length} field${touched.length > 1 ? 's' : ''} from your voice note.`, 'success');
+      pushToast(
+        t(language, touched.length > 1 ? 'toastAutofilledMany' : 'toastAutofilledOne', { count: touched.length }),
+        'success'
+      );
     },
-    [flashAutofilled, pushToast]
+    [flashAutofilled, pushToast, language]
   );
 
   const handleVoiceError = useCallback(
@@ -186,7 +200,7 @@ export default function Home() {
     setAutofilled(new Set());
     setInvoiceId(generateInvoiceId());
     setSmsState('idle');
-    pushToast('Form cleared.', 'info');
+    pushToast(t(language, 'toastFormCleared'), 'info');
   }
 
   function handleExportJson() {
@@ -216,15 +230,16 @@ export default function Home() {
 
   async function handleDownloadPdf() {
     if (!validateForPdf()) {
-      pushToast('Add the client first and last name before downloading the PDF.', 'error');
+      pushToast(t(language, 'toastPdfNeedsName'), 'error');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
     setPdfState('generating');
     try {
+      const pdfRequest = { data, totals, invoiceId, generatedOn, lang: language };
       if (isNativeApp()) {
-        await downloadPdfClient({ data, totals, invoiceId, generatedOn });
+        await downloadPdfClient(pdfRequest);
       } else {
         // On the hosted web app the server generates the PDF. If the server
         // route is unreachable (e.g. the static export used by the app),
@@ -233,29 +248,29 @@ export default function Home() {
           const res = await fetch('/api/generate-pdf', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data, totals, invoiceId, generatedOn }),
+            body: JSON.stringify(pdfRequest),
           });
           if (!res.ok) {
             const errorBody = await res.json().catch(() => null);
-            throw new Error(errorBody?.error || 'Could not generate the PDF.');
+            throw new Error(errorBody?.error || t(language, 'toastPdfError'));
           }
 
           const blob = await res.blob();
           const url = URL.createObjectURL(blob);
           const anchor = document.createElement('a');
           anchor.href = url;
-          anchor.download = `${invoiceId.replace('#', '') || 'invoice'}.pdf`;
+          anchor.download = `${invoiceId.replace('#', '') || t(language, 'filenameInvoice')}.pdf`;
           document.body.appendChild(anchor);
           anchor.click();
           anchor.remove();
           setTimeout(() => URL.revokeObjectURL(url), 1000);
         } catch {
-          await downloadPdfClient({ data, totals, invoiceId, generatedOn });
+          await downloadPdfClient(pdfRequest);
         }
       }
-      pushToast('Invoice PDF downloaded.', 'success');
+      pushToast(t(language, 'toastPdfDownloaded'), 'success');
     } catch (error: any) {
-      pushToast(error?.message || 'Could not generate the PDF. Please try again.', 'error');
+      pushToast(error?.message || t(language, 'toastPdfRetry'), 'error');
     } finally {
       setPdfState('idle');
     }
@@ -263,22 +278,23 @@ export default function Home() {
 
   async function handleSendSms() {
     if (!validateForSms()) {
-      pushToast('Add first name, last name, and a valid phone number to send via SMS.', 'error');
+      pushToast(t(language, 'toastSmsNeedsFields'), 'error');
       return;
     }
 
     setSmsState('sending');
     const clientName = `${data.firstName} ${data.lastName}`.trim();
-    const workSummary = data.description || 'services rendered';
-    const totalDueText = currency(totals.total);
+    const workSummary = data.description || t(language, 'servicesRendered');
+    const totalDueText = currency(totals.total, language);
+    const shareOptions = { clientName, invoiceId, workSummary, totalDue: totalDueText, lang: language };
 
     try {
       if (isNativeApp()) {
         // In the app there is no Twilio backend — open the OS share sheet
         // (Messages / SMS) with the invoice summary pre-filled.
-        await shareInvoiceText({ clientName, invoiceId, workSummary, totalDue: totalDueText });
+        await shareInvoiceText(shareOptions);
         setSmsState('sent');
-        pushToast('Invoice ready — pick Messages to text it.', 'success');
+        pushToast(t(language, 'toastShareReady'), 'success');
         setTimeout(() => setSmsState('idle'), 4000);
         return;
       }
@@ -293,25 +309,26 @@ export default function Home() {
             workSummary,
             totalDue: totals.total,
             invoiceId,
+            lang: language,
           }),
         });
         const json: SendSmsResponse = await res.json();
 
         if (!res.ok || !json.success) {
-          throw new Error(json.error || 'Failed to send SMS.');
+          throw new Error(json.error || t(language, 'toastSmsFailed'));
         }
 
         setSmsState('sent');
-        pushToast(`Invoice sent via SMS to ${data.phone}.`, 'success');
+        pushToast(t(language, 'toastSmsSentTo', { phone: data.phone }), 'success');
         setTimeout(() => setSmsState('idle'), 4000);
         return;
       } catch (serverError) {
         // No Twilio backend here (e.g. static export on a phone) — hand off
         // to the OS share sheet instead of failing.
         if (await canShareInvoice()) {
-          await shareInvoiceText({ clientName, invoiceId, workSummary, totalDue: totalDueText });
+          await shareInvoiceText(shareOptions);
           setSmsState('sent');
-          pushToast('Invoice ready — pick Messages to text it.', 'success');
+          pushToast(t(language, 'toastShareReady'), 'success');
           setTimeout(() => setSmsState('idle'), 4000);
           return;
         }
@@ -319,10 +336,15 @@ export default function Home() {
       }
     } catch (err: any) {
       setSmsState('error');
-      pushToast(err?.message || 'Could not send the SMS. Please try again.', 'error');
+      pushToast(err?.message || t(language, 'toastSmsRetry'), 'error');
       setTimeout(() => setSmsState('idle'), 2500);
     }
   }
+
+  const languageButtonClass = (active: boolean) =>
+    `font-mono text-[10px] tracking-wide px-2 py-1 transition-colors ${
+      active ? 'bg-ink text-paper' : 'text-slate-ink hover:text-ink'
+    }`;
 
   return (
     <>
@@ -334,9 +356,21 @@ export default function Home() {
             <div className="w-8 h-8 rounded-[6px] bg-ink flex items-center justify-center">
               <span className="font-mono text-paper text-xs font-semibold">§</span>
             </div>
-            <div className="leading-tight">
+            <div className="leading-tight hidden xs:block sm:block">
               <p className="font-display font-semibold text-[15px] tracking-tight">Ledger</p>
               <p className="font-mono text-[10px] text-slate-ink tracking-wide -mt-0.5">VOICE INVOICE MAKER</p>
+            </div>
+            <div
+              className="flex items-center rounded-[4px] border border-rule overflow-hidden ml-1"
+              role="group"
+              aria-label="Language"
+            >
+              <button type="button" onClick={() => setLanguage('en')} className={languageButtonClass(language === 'en')}>
+                EN
+              </button>
+              <button type="button" onClick={() => setLanguage('fr')} className={languageButtonClass(language === 'fr')}>
+                FR
+              </button>
             </div>
           </div>
           <div className="hidden sm:flex items-center gap-2">
@@ -344,38 +378,38 @@ export default function Home() {
               onClick={handleClearForm}
               className="font-mono text-[11px] uppercase tracking-wide px-3.5 py-2 rounded-[4px] border border-rule text-slate-ink hover:border-danger hover:text-danger transition-colors"
             >
-              Clear Form
+              {t(language, 'clearForm')}
             </button>
             <button
               onClick={handleExportJson}
               className="font-mono text-[11px] uppercase tracking-wide px-3.5 py-2 rounded-[4px] border border-rule text-ink hover:border-ink transition-colors"
             >
-              Export JSON
+              {t(language, 'exportJson')}
             </button>
             <button
               onClick={handleDownloadPdf}
               disabled={pdfState === 'generating'}
               className="bg-ledger hover:bg-ledger-dark text-paper font-mono text-[11px] uppercase tracking-wide px-4 py-2 rounded-[4px] transition-colors"
             >
-              {pdfState === 'generating' ? 'Generating PDF…' : 'Download PDF'}
+              {pdfState === 'generating' ? t(language, 'generatingPdf') : t(language, 'downloadPdf')}
             </button>
           </div>
           {/* Mobile: compact icon-only actions */}
           <div className="flex sm:hidden items-center gap-1.5">
             <button
               onClick={handleClearForm}
-              aria-label="Clear form"
+              aria-label={t(language, 'clearFormAria')}
               className="font-mono text-[10px] uppercase px-2.5 py-2 rounded-[4px] border border-rule text-slate-ink"
             >
-              Clear
+              {t(language, 'clear')}
             </button>
             <button
               onClick={handleDownloadPdf}
               disabled={pdfState === 'generating'}
-              aria-label="Download PDF"
+              aria-label={t(language, 'downloadPdfAria')}
               className="bg-ledger text-paper font-mono text-[10px] uppercase px-2.5 py-2 rounded-[4px]"
             >
-              PDF
+              {t(language, 'pdf')}
             </button>
           </div>
         </div>
@@ -398,7 +432,7 @@ export default function Home() {
           {/* RIGHT: live preview (desktop) */}
           <div className="hidden lg:block lg:sticky lg:top-24">
             <p className="no-print font-mono text-[10px] uppercase tracking-wider text-slate-ink mb-2.5 px-1">
-              Live preview
+              {t(language, 'livePreview')}
             </p>
             <InvoicePreview
               data={data}
@@ -427,17 +461,17 @@ export default function Home() {
           />
           <circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="2" />
         </svg>
-        Preview Invoice · {currency(totals.total)}
+        {t(language, 'previewInvoice')} · {currency(totals.total, language)}
       </button>
 
       {mobilePreviewOpen && (
         <div className="no-print lg:hidden fixed inset-0 z-50 bg-ink/40 flex flex-col justify-end">
           <div className="bg-canvas rounded-t-[16px] max-h-[90vh] overflow-y-auto p-5 pb-[calc(env(safe-area-inset-bottom)+2rem)]">
             <div className="flex items-center justify-between mb-4">
-              <p className="font-mono text-[10px] uppercase tracking-wider text-slate-ink">Live preview</p>
+              <p className="font-mono text-[10px] uppercase tracking-wider text-slate-ink">{t(language, 'livePreview')}</p>
               <button
                 onClick={() => setMobilePreviewOpen(false)}
-                aria-label="Close preview"
+                aria-label={t(language, 'closePreview')}
                 className="font-mono text-lg text-slate-ink"
               >
                 ×

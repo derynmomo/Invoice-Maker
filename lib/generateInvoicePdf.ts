@@ -1,5 +1,6 @@
 import { PDFDocument, PDFFont, PDFPage, StandardFonts, rgb } from 'pdf-lib';
 import { currency, formatDateLong, safeNumber } from './calculations';
+import { t, type Language } from './i18n';
 import type { GeneratePdfRequest } from './types';
 
 const PAGE_WIDTH = 612;
@@ -11,9 +12,9 @@ const MUTED = rgb(96 / 255, 103 / 255, 113 / 255);
 const RULE = rgb(218 / 255, 215 / 255, 205 / 255);
 const PAPER = rgb(252 / 255, 251 / 255, 247 / 255);
 
-function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): string[] {
+function wrapText(text: string, font: PDFFont, size: number, maxWidth: number, lang: Language): string[] {
   const words = text.trim().split(/\s+/).filter(Boolean);
-  if (words.length === 0) return ['No service description provided.'];
+  if (words.length === 0) return [t(lang, 'pdfNoDescription')];
   const lines: string[] = [];
   let current = '';
 
@@ -36,6 +37,7 @@ function drawRight(page: PDFPage, text: string, right: number, y: number, font: 
 
 export async function generateInvoicePdf(request: GeneratePdfRequest): Promise<Uint8Array> {
   const { data, totals, invoiceId, generatedOn } = request;
+  const lang = request.lang ?? 'en';
   const document = await PDFDocument.create();
   const page = document.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
   const regular = await document.embedFont(StandardFonts.Helvetica);
@@ -45,39 +47,39 @@ export async function generateInvoicePdf(request: GeneratePdfRequest): Promise<U
   page.drawRectangle({ x: 0, y: 0, width: PAGE_WIDTH, height: PAGE_HEIGHT, color: PAPER });
   page.drawRectangle({ x: 0, y: 0, width: 18, height: PAGE_HEIGHT, color: NAVY });
 
-  page.drawText('INVOICE', { x: MARGIN, y: 710, font: bold, size: 28, color: NAVY });
+  page.drawText(t(lang, 'pdfInvoice'), { x: MARGIN, y: 710, font: bold, size: 28, color: NAVY });
   page.drawText('LEDGER', { x: MARGIN, y: 745, font: mono, size: 9, color: GREEN });
   page.drawText('VOICE INVOICE MAKER', { x: MARGIN + 48, y: 745, font: mono, size: 8, color: MUTED });
-  drawRight(page, 'INVOICE NO.', PAGE_WIDTH - MARGIN, 744, mono, 8, MUTED);
-  drawRight(page, invoiceId || 'UNASSIGNED', PAGE_WIDTH - MARGIN, 724, bold, 15, GREEN);
-  drawRight(page, `Issued ${formatDateLong(generatedOn)}`, PAGE_WIDTH - MARGIN, 707, regular, 9, MUTED);
+  drawRight(page, t(lang, 'pdfInvoiceNo'), PAGE_WIDTH - MARGIN, 744, mono, 8, MUTED);
+  drawRight(page, invoiceId || t(lang, 'pdfUnassigned'), PAGE_WIDTH - MARGIN, 724, bold, 15, GREEN);
+  drawRight(page, t(lang, 'pdfIssued', { date: formatDateLong(generatedOn, lang) }), PAGE_WIDTH - MARGIN, 707, regular, 9, MUTED);
 
   page.drawLine({ start: { x: MARGIN, y: 687 }, end: { x: PAGE_WIDTH - MARGIN, y: 687 }, thickness: 1.5, color: NAVY });
 
-  page.drawText('BILL TO', { x: MARGIN, y: 653, font: mono, size: 8, color: MUTED });
-  const clientName = `${data.firstName} ${data.lastName}`.trim() || 'Client name';
+  page.drawText(t(lang, 'pdfBillTo'), { x: MARGIN, y: 653, font: mono, size: 8, color: MUTED });
+  const clientName = `${data.firstName} ${data.lastName}`.trim() || t(lang, 'pdfClientFallback');
   page.drawText(clientName, { x: MARGIN, y: 632, font: bold, size: 14, color: NAVY });
   if (data.email.trim()) page.drawText(data.email.trim(), { x: MARGIN, y: 615, font: regular, size: 9, color: MUTED });
   if (data.phone.trim()) page.drawText(data.phone.trim(), { x: MARGIN, y: 599, font: regular, size: 9, color: MUTED });
 
-  drawRight(page, 'SERVICE DATE', PAGE_WIDTH - MARGIN, 653, mono, 8, MUTED);
-  drawRight(page, formatDateLong(data.serviceDate), PAGE_WIDTH - MARGIN, 630, bold, 11, NAVY);
+  drawRight(page, t(lang, 'pdfServiceDate'), PAGE_WIDTH - MARGIN, 653, mono, 8, MUTED);
+  drawRight(page, formatDateLong(data.serviceDate, lang), PAGE_WIDTH - MARGIN, 630, bold, 11, NAVY);
 
-  page.drawText('WORK PERFORMED', { x: MARGIN, y: 560, font: mono, size: 8, color: MUTED });
+  page.drawText(t(lang, 'pdfWorkPerformed'), { x: MARGIN, y: 560, font: mono, size: 8, color: MUTED });
   page.drawLine({ start: { x: MARGIN, y: 550 }, end: { x: PAGE_WIDTH - MARGIN, y: 550 }, thickness: 0.8, color: RULE });
-  const descriptionLines = wrapText(data.description, regular, 10.5, PAGE_WIDTH - MARGIN * 2);
+  const descriptionLines = wrapText(data.description, regular, 10.5, PAGE_WIDTH - MARGIN * 2, lang);
   descriptionLines.forEach((line, index) => {
     page.drawText(line, { x: MARGIN, y: 528 - index * 15, font: regular, size: 10.5, color: NAVY });
   });
 
   const tableTop = Math.min(420, 510 - descriptionLines.length * 15);
   page.drawRectangle({ x: MARGIN, y: tableTop, width: PAGE_WIDTH - MARGIN * 2, height: 27, color: NAVY });
-  page.drawText('ITEM', { x: MARGIN + 12, y: tableTop + 9, font: mono, size: 8, color: PAPER });
-  drawRight(page, 'AMOUNT', PAGE_WIDTH - MARGIN - 12, tableTop + 9, mono, 8, PAPER);
+  page.drawText(t(lang, 'pdfItem'), { x: MARGIN + 12, y: tableTop + 9, font: mono, size: 8, color: PAPER });
+  drawRight(page, t(lang, 'pdfAmount'), PAGE_WIDTH - MARGIN - 12, tableTop + 9, mono, 8, PAPER);
 
   const rows = [
-    [`Labor - ${safeNumber(data.hours).toFixed(2)} hrs x ${currency(data.rate)}`, currency(totals.laborSubtotal)],
-    ['Materials and parts', currency(data.materialCost)],
+    [t(lang, 'pdfLaborRow', { hours: safeNumber(data.hours).toFixed(2), rate: currency(data.rate, lang) }), currency(totals.laborSubtotal, lang)],
+    [t(lang, 'pdfMaterials'), currency(data.materialCost, lang)],
   ];
   rows.forEach(([label, amount], index) => {
     const y = tableTop - 30 - index * 34;
@@ -88,9 +90,13 @@ export async function generateInvoicePdf(request: GeneratePdfRequest): Promise<U
 
   const totalsTop = tableTop - 114;
   const totalRows: Array<[string, string, boolean]> = [
-    ['Subtotal', currency(totals.subtotal), false],
-    [`Tax (${safeNumber(data.taxRate).toFixed(data.taxRate % 1 === 0 ? 0 : 2)}%)`, currency(totals.taxAmount), false],
-    ['TOTAL DUE', currency(totals.total), true],
+    [t(lang, 'pdfSubtotal'), currency(totals.subtotal, lang), false],
+    [
+      t(lang, 'pdfTax', { pct: safeNumber(data.taxRate).toFixed(data.taxRate % 1 === 0 ? 0 : 2) }),
+      currency(totals.taxAmount, lang),
+      false,
+    ],
+    [t(lang, 'pdfTotalDue'), currency(totals.total, lang), true],
   ];
   totalRows.forEach(([label, amount, emphasized], index) => {
     const y = totalsTop - index * 29;
@@ -104,12 +110,12 @@ export async function generateInvoicePdf(request: GeneratePdfRequest): Promise<U
   });
 
   page.drawLine({ start: { x: MARGIN, y: 74 }, end: { x: PAGE_WIDTH - MARGIN, y: 74 }, thickness: 0.7, color: RULE });
-  page.drawText('Thank you for your business.', { x: MARGIN, y: 52, font: bold, size: 9, color: NAVY });
-  drawRight(page, invoiceId || 'Invoice', PAGE_WIDTH - MARGIN, 52, mono, 8, MUTED);
+  page.drawText(t(lang, 'pdfThanks'), { x: MARGIN, y: 52, font: bold, size: 9, color: NAVY });
+  drawRight(page, invoiceId || t(lang, 'pdfInvoiceFallback'), PAGE_WIDTH - MARGIN, 52, mono, 8, MUTED);
 
-  document.setTitle(`${invoiceId || 'Invoice'} - ${clientName}`);
+  document.setTitle(t(lang, 'pdfDocTitle', { invoiceId: invoiceId || t(lang, 'pdfInvoiceFallback'), client: clientName }));
   document.setAuthor('Ledger Invoice Maker');
-  document.setSubject('Invoice');
+  document.setSubject(t(lang, 'pdfSubject'));
   document.setCreationDate(new Date());
   return document.save();
 }

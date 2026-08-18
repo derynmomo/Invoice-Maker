@@ -1,3 +1,5 @@
+import type { Language } from './i18n';
+
 // ---------------------------------------------------------------------------
 // Shared types used by the form, the live preview, and the API routes.
 // Keeping these in one place means the client and server always agree on
@@ -57,6 +59,7 @@ export interface SendSmsRequest {
   totalDue: number;
   invoiceId: string;
   invoiceUrl?: string;
+  lang?: Language;
 }
 
 export interface SendSmsResponse {
@@ -70,6 +73,7 @@ export interface GeneratePdfRequest {
   totals: Totals;
   invoiceId: string;
   generatedOn: string;
+  lang?: Language;
 }
 
 export interface Totals {

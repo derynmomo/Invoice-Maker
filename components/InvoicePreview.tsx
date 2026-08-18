@@ -2,6 +2,8 @@
 
 import clsx from 'clsx';
 import { currency, formatDateLong } from '@/lib/calculations';
+import { useLanguage } from './LanguageContext';
+import { t } from '@/lib/i18n';
 import type { InvoiceFormData, Totals } from '@/lib/types';
 
 export type SmsState = 'idle' | 'sending' | 'sent' | 'error';
@@ -25,8 +27,11 @@ export default function InvoicePreview({
   onSendSms,
   canSendSms,
 }: InvoicePreviewProps) {
-  const fullName = (data.firstName + ' ' + data.lastName).trim() || 'Client name';
-  const taxLabel = `Tax (${data.taxRate % 1 === 0 ? data.taxRate.toFixed(0) : data.taxRate.toFixed(2)}%)`;
+  const { language } = useLanguage();
+  const fullName = (data.firstName + ' ' + data.lastName).trim() || t(language, 'clientFallback');
+  const taxLabel = t(language, 'taxRowLabel', {
+    pct: data.taxRate % 1 === 0 ? data.taxRate.toFixed(0) : data.taxRate.toFixed(2),
+  });
 
   return (
     <div>
@@ -50,11 +55,13 @@ export default function InvoicePreview({
           {/* Letterhead */}
           <div className="flex items-start justify-between pb-6 mb-6 border-b-2 border-ink">
             <div>
-              <p className="font-display text-2xl font-semibold tracking-tight">Invoice</p>
-              <p className="font-mono text-[11px] text-slate-ink mt-1">Issued {formatDateLong(generatedOn)}</p>
+              <p className="font-display text-2xl font-semibold tracking-tight">{t(language, 'invoiceTitle')}</p>
+              <p className="font-mono text-[11px] text-slate-ink mt-1">
+                {t(language, 'issuedPrefix', { date: formatDateLong(generatedOn, language) })}
+              </p>
             </div>
             <div className="text-right">
-              <p className="font-mono text-[11px] text-slate-ink uppercase tracking-wide">Invoice No.</p>
+              <p className="font-mono text-[11px] text-slate-ink uppercase tracking-wide">{t(language, 'invoiceNo')}</p>
               <p className="font-mono text-lg font-semibold tabular text-ledger">{invoiceId || '—'}</p>
             </div>
           </div>
@@ -62,22 +69,22 @@ export default function InvoicePreview({
           {/* Bill to / service date */}
           <div className="grid grid-cols-2 gap-6 mb-8">
             <div>
-              <p className="font-mono text-[10px] uppercase tracking-wide text-slate-ink mb-1.5">Billed to</p>
+              <p className="font-mono text-[10px] uppercase tracking-wide text-slate-ink mb-1.5">{t(language, 'billedTo')}</p>
               <p className="font-display font-semibold text-[16px]">{fullName}</p>
               <p className="text-[13px] text-slate-ink mt-0.5">{data.email || '—'}</p>
               {data.phone && <p className="text-[13px] text-slate-ink">{data.phone}</p>}
             </div>
             <div className="text-right">
-              <p className="font-mono text-[10px] uppercase tracking-wide text-slate-ink mb-1.5">Date of service</p>
-              <p className="font-mono text-[14px] tabular">{formatDateLong(data.serviceDate)}</p>
+              <p className="font-mono text-[10px] uppercase tracking-wide text-slate-ink mb-1.5">{t(language, 'dateOfService')}</p>
+              <p className="font-mono text-[14px] tabular">{formatDateLong(data.serviceDate, language)}</p>
             </div>
           </div>
 
           {/* Description */}
           <div className="mb-8">
-            <p className="font-mono text-[10px] uppercase tracking-wide text-slate-ink mb-1.5">Work performed</p>
+            <p className="font-mono text-[10px] uppercase tracking-wide text-slate-ink mb-1.5">{t(language, 'workPerformed')}</p>
             <p className="text-[14px] leading-relaxed text-ink/90 whitespace-pre-line">
-              {data.description.trim() || 'No description provided yet.'}
+              {data.description.trim() || t(language, 'noDescription')}
             </p>
           </div>
 
@@ -85,24 +92,26 @@ export default function InvoicePreview({
           <table className="w-full text-[13.5px] mb-2">
             <thead>
               <tr className="border-b border-rule font-mono text-[10.5px] uppercase tracking-wide text-slate-ink">
-                <th className="text-left font-medium py-2">Item</th>
-                <th className="text-right font-medium py-2">Qty</th>
-                <th className="text-right font-medium py-2">Rate</th>
-                <th className="text-right font-medium py-2">Amount</th>
+                <th className="text-left font-medium py-2">{t(language, 'item')}</th>
+                <th className="text-right font-medium py-2">{t(language, 'qty')}</th>
+                <th className="text-right font-medium py-2">{t(language, 'rateHeader')}</th>
+                <th className="text-right font-medium py-2">{t(language, 'amount')}</th>
               </tr>
             </thead>
             <tbody className="font-mono tabular">
               <tr className="border-b border-rule/70">
-                <td className="py-2.5">Labor</td>
-                <td className="text-right py-2.5">{(data.hours || 0).toFixed(2)} hrs</td>
-                <td className="text-right py-2.5">{currency(data.rate)}</td>
-                <td className="text-right py-2.5">{currency(totals.laborSubtotal)}</td>
+                <td className="py-2.5">{t(language, 'labor')}</td>
+                <td className="text-right py-2.5">
+                  {(data.hours || 0).toFixed(2)} {t(language, 'hrsUnit')}
+                </td>
+                <td className="text-right py-2.5">{currency(data.rate, language)}</td>
+                <td className="text-right py-2.5">{currency(totals.laborSubtotal, language)}</td>
               </tr>
               <tr className="border-b border-rule/70">
-                <td className="py-2.5">Materials</td>
+                <td className="py-2.5">{t(language, 'materials')}</td>
                 <td className="text-right py-2.5">—</td>
                 <td className="text-right py-2.5">—</td>
-                <td className="text-right py-2.5">{currency(data.materialCost)}</td>
+                <td className="text-right py-2.5">{currency(data.materialCost, language)}</td>
               </tr>
             </tbody>
           </table>
@@ -111,17 +120,17 @@ export default function InvoicePreview({
           <div className="flex justify-end">
             <div className="w-full max-w-[240px] font-mono text-[13.5px]">
               <div className="flex justify-between py-1.5">
-                <span className="text-slate-ink">Subtotal</span>
-                <span className="tabular">{currency(totals.subtotal)}</span>
+                <span className="text-slate-ink">{t(language, 'subtotal')}</span>
+                <span className="tabular">{currency(totals.subtotal, language)}</span>
               </div>
               <div className="flex justify-between py-1.5">
                 <span className="text-slate-ink">{taxLabel}</span>
-                <span className="tabular">{currency(totals.taxAmount)}</span>
+                <span className="tabular">{currency(totals.taxAmount, language)}</span>
               </div>
               <div className="flex justify-between items-baseline pt-3 mt-2 border-t-2 border-ink">
-                <span className="font-display font-semibold text-[15px]">Total due</span>
+                <span className="font-display font-semibold text-[15px]">{t(language, 'totalDue')}</span>
                 <span className="font-display font-semibold text-2xl tabular text-ledger">
-                  {currency(totals.total)}
+                  {currency(totals.total, language)}
                 </span>
               </div>
             </div>
@@ -129,8 +138,10 @@ export default function InvoicePreview({
 
           {/* Footer */}
           <div className="mt-10 pt-5 border-t border-rule flex items-center justify-between">
-            <p className="text-[11px] text-slate-ink">Thank you for the opportunity to do this work.</p>
-            <p className="font-mono text-[10px] text-slate-ink">Generated {formatDateLong(generatedOn)}</p>
+            <p className="text-[11px] text-slate-ink">{t(language, 'footerThanks')}</p>
+            <p className="font-mono text-[10px] text-slate-ink">
+              {t(language, 'generatedPrefix', { date: formatDateLong(generatedOn, language) })}
+            </p>
           </div>
         </div>
       </div>
@@ -155,13 +166,13 @@ export default function InvoicePreview({
               <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
             </svg>
           )}
-          {smsState === 'sent' ? 'Sent ✓ — Send again' : smsState === 'sending' ? 'Sending…' : 'Send Invoice via SMS'}
+          {smsState === 'sent'
+            ? t(language, 'smsSentAgain')
+            : smsState === 'sending'
+              ? t(language, 'smsSending')
+              : t(language, 'sendViaSms')}
         </button>
-        {!canSendSms && (
-          <p className="text-[11px] text-slate-ink mt-2 text-center">
-            Add the client&rsquo;s first name, last name, and phone number to enable SMS delivery.
-          </p>
-        )}
+        {!canSendSms && <p className="text-[11px] text-slate-ink mt-2 text-center">{t(language, 'smsDisabledHelper')}</p>}
       </div>
     </div>
   );

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import twilio from 'twilio';
 import { currency, isValidPhone, toE164 } from '@/lib/calculations';
+import { t, isLanguage } from '@/lib/i18n';
 import type { SendSmsRequest, SendSmsResponse } from '@/lib/types';
 
 export const runtime = 'nodejs';
@@ -50,15 +51,16 @@ export async function POST(req: NextRequest) {
     }
 
     const to = toE164(body.toPhoneNumber);
-    const workSummary = (body.workSummary || 'services rendered').trim();
+    const lang = isLanguage(body.lang) ? body.lang : 'en';
+    const workSummary = (body.workSummary || t(lang, 'servicesRendered')).trim();
     const trimmedSummary = workSummary.length > 140 ? workSummary.slice(0, 137) + '…' : workSummary;
 
     const messageLines = [
-      `Hi ${body.clientName}, your invoice ${body.invoiceId} is ready.`,
-      `Work: ${trimmedSummary}`,
-      `Total due: ${currency(body.totalDue)}`,
+      t(lang, 'shareHi', { client: body.clientName, invoiceId: body.invoiceId }),
+      t(lang, 'shareWork', { summary: trimmedSummary }),
+      t(lang, 'shareTotalDue', { due: currency(body.totalDue, lang) }),
     ];
-    if (body.invoiceUrl) messageLines.push(`View & pay: ${body.invoiceUrl}`);
+    if (body.invoiceUrl) messageLines.push(t(lang, 'smsViewPay', { url: body.invoiceUrl }));
 
     const client = twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
     const message = await client.messages.create({

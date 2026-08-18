@@ -8,6 +8,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
 import { generateInvoicePdf } from './generateInvoicePdf';
+import { t, type Language } from './i18n';
 import type { GeneratePdfRequest } from './types';
 
 export function isNativeApp(): boolean {
@@ -43,18 +44,20 @@ export async function shareInvoiceText(options: {
   invoiceId: string;
   workSummary: string;
   totalDue: string;
+  lang?: Language;
 }): Promise<void> {
-  const summary = (options.workSummary || 'services rendered').trim();
+  const lang = options.lang ?? 'en';
+  const summary = (options.workSummary || t(lang, 'servicesRendered')).trim();
   const trimmed = summary.length > 140 ? summary.slice(0, 137) + '…' : summary;
   const text = [
-    `Hi ${options.clientName}, your invoice ${options.invoiceId} is ready.`,
-    `Work: ${trimmed}`,
-    `Total due: ${options.totalDue}`,
+    t(lang, 'shareHi', { client: options.clientName, invoiceId: options.invoiceId }),
+    t(lang, 'shareWork', { summary: trimmed }),
+    t(lang, 'shareTotalDue', { due: options.totalDue }),
   ].join('\n');
 
   await Share.share({
-    title: `Invoice ${options.invoiceId}`,
+    title: t(lang, 'shareTitle', { invoiceId: options.invoiceId }),
     text,
-    dialogTitle: 'Send invoice',
+    dialogTitle: t(lang, 'shareDialogTitle'),
   });
 }

@@ -3,6 +3,9 @@
 import { useRef, useState } from 'react';
 import { createSpeechEngine, type SpeechEngine } from '@/lib/speech';
 import { extractInvoiceFieldsLocally } from '@/lib/localVoiceParser';
+import { extractInvoiceFieldsLocallyFr } from '@/lib/localVoiceParser.fr';
+import { t } from '@/lib/i18n';
+import { useLanguage } from './LanguageContext';
 import type { ExtractedInvoiceFields } from '@/lib/types';
 
 type VoiceState = 'idle' | 'listening' | 'processing' | 'error';
@@ -14,16 +17,8 @@ interface VoiceWidgetProps {
 
 const MAX_RECORDING_MS = 60_000;
 
-function normalizeLanguage(raw: string): string {
-  const locale = (raw || 'en-CA').trim();
-  if (locale.startsWith('en')) return 'en-US';
-  if (locale.startsWith('fr')) return 'fr-CA';
-  if (locale.startsWith('es')) return 'es-US';
-  if (locale.startsWith('pt')) return 'pt-BR';
-  return locale.slice(0, 5);
-}
-
 export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) {
+  const { language } = useLanguage();
   const [state, setState] = useState<VoiceState>('idle');
   const [seconds, setSeconds] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState('');
@@ -53,14 +48,15 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
     resetEngine();
 
     if (!transcript) {
-      onError("Couldn't make out any speech. Try again and speak for a few seconds.");
+      onError(t(language, 'noSpeech'));
       setState('error');
       return;
     }
 
     setState('processing');
     setLastTranscript(transcript);
-    const fields = extractInvoiceFieldsLocally(transcript);
+    const fields =
+      language === 'fr' ? extractInvoiceFieldsLocallyFr(transcript) : extractInvoiceFieldsLocally(transcript);
     onExtracted(fields, transcript);
     setState('idle');
   }
@@ -69,7 +65,8 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
     if (state === 'listening' || state === 'processing' || startingRef.current) return;
 
     startingRef.current = true;
-    const engine = await createSpeechEngine(normalizeLanguage(navigator.language), {
+    const locale = language === 'fr' ? 'fr-CA' : 'en-US';
+    const engine = await createSpeechEngine(locale, {
       onStart: () => {
         setState('listening');
         setSeconds(0);
@@ -96,7 +93,7 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
 
     if (!engine) {
       startingRef.current = false;
-      onError('Speech recognition is not supported on this device. Use the native app on iPhone for full voice support.');
+      onError(t(language, 'notSupported'));
       setState('error');
       return;
     }
@@ -107,7 +104,7 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
     } catch {
       clearTimers();
       resetEngine();
-      onError('Could not start speech recognition on this device. Please try again.');
+      onError(t(language, 'startError'));
       setState('error');
     }
   }
@@ -131,7 +128,7 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
         type="button"
         onClick={handleMicClick}
         disabled={state === 'processing'}
-        aria-label={state === 'listening' ? 'Stop recording' : 'Start voice note'}
+        aria-label={state === 'listening' ? t(language, 'micStopAria') : t(language, 'micStartAria')}
         className={`relative w-12 h-12 rounded-full flex items-center justify-center shrink-0 transition-colors
           ${state === 'listening' ? 'bg-danger' : state === 'processing' ? 'bg-slate-ink' : 'bg-ledger hover:bg-ledger-dark'}
           disabled:cursor-wait`}
@@ -143,16 +140,16 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
       </button>
 
       <div className="flex-1 min-w-0">
-        <p className="font-display font-semibold text-[14.5px] leading-tight">Speak your invoice details</p>
+        <p className="font-display font-semibold text-[14.5px] leading-tight">{t(language, 'speakHeader')}</p>
         <p className="text-[12.5px] text-slate-ink mt-0.5 leading-snug">
-          {state === 'idle' && 'On-device speech recognition — works fully offline in the app.'}
+          {state === 'idle' && t(language, 'offlineNote')}
           {state === 'listening' && (
             <span className="font-mono tabular text-danger">
-              Listening · {mm}:{ss} — tap again to stop
+              {t(language, 'listening', { time: `${mm}:${ss}` })}
             </span>
           )}
-          {state === 'processing' && 'Reading invoice details locally…'}
-          {state === 'error' && 'Tap the mic to try again.'}
+          {state === 'processing' && t(language, 'processing')}
+          {state === 'error' && t(language, 'tapToRetry')}
         </p>
         {state === 'listening' && liveTranscript && (
           <p className="text-[11px] text-slate-ink mt-1 line-clamp-2">{liveTranscript}</p>
@@ -162,7 +159,7 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
       {lastTranscript && state === 'idle' && (
         <details className="no-print shrink-0 hidden sm:block max-w-[220px]">
           <summary className="font-mono text-[10px] uppercase tracking-wide text-slate-ink cursor-pointer">
-            Last transcript
+            {t(language, 'lastTranscript')}
           </summary>
           <p className="text-[11px] text-slate-ink mt-1 leading-snug">{lastTranscript}</p>
         </details>
