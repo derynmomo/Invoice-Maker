@@ -1,0 +1,15 @@
+{
+  "appId": "com.ledger.voiceinvoice",
+  "appName": "Ledger",
+  "webDir": "out",
+  "version": "1.0.0",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "allowMixedContent": false
+  },
+  "ios": {
+    "contentInset": "automatic"
+  }
+}

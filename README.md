@@ -2,7 +2,9 @@
 
 A Next.js 14 (App Router) invoice builder with a live dual-pane preview, no-cost
 browser speech recognition, local invoice-field extraction, one-click SMS delivery via Twilio,
-and direct PDF download.
+and direct PDF download. Also packaged as a native **iOS + Android app** (Capacitor) with
+on-device speech recognition — see [MOBILE.md](MOBILE.md) for the build and App Store /
+Google Play submission steps.
 
 ## 1. Stack
 
@@ -30,13 +32,17 @@ invoice-maker/
 ├─ components/
 │  ├─ InvoiceForm.tsx           # Sections 1–4 + validation + tax presets
 │  ├─ InvoicePreview.tsx        # Live invoice + "Send via SMS" action
-│  ├─ VoiceWidget.tsx           # Browser speech recognition UI
+│  ├─ VoiceWidget.tsx           # Speech recognition UI (native or browser)
 │  ├─ Stepper.tsx               # +/- quick-adjust control
 │  └─ Toast.tsx                 # Toast notifications
 ├─ lib/
 │  ├─ types.ts                  # Shared client/server types
 │  ├─ localVoiceParser.ts       # Local transcript → invoice fields
+│  ├─ speech.ts                 # Unified speech engine (native + web)
+│  ├─ mobile.ts                 # Client-side PDF + share-sheet SMS
 │  └─ calculations.ts           # safeNumber/currency/computeTotals/etc.
+├─ assets/                      # App icon + splash sources (scripts/generate-assets.js)
+├─ ios/  android/               # Capacitor native projects (npm run sync)
 ├─ .env.example
 └─ package.json
 ```

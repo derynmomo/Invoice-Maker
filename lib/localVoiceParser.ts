@@ -182,6 +182,8 @@ function parseDate(transcript: string, now: Date): string | null {
 
 function timePhraseToMinutes(phrase: string): number | null {
   const lower = phrase.toLowerCase();
+  if (/\bnoon\b/.test(lower)) return 12 * 60;
+  if (/\bmidnight\b/.test(lower)) return 0;
   const isPm = /\bp\.?m\.?\b|afternoon|evening|tonight/.test(lower);
   const isAm = /\ba\.?m\.?\b|morning/.test(lower);
   const cleaned = lower
@@ -224,6 +226,14 @@ function parseHours(transcript: string): number | null {
     if (hours !== null && minutes !== null && minutes < 60) return hours + minutes / 60;
   }
 
+  const minutesOnly = text.match(
+    /(?:worked|took|spent)?\s*(?:for\s+)?([\w.-]+(?:\s+[\w.-]+){0,3})\s+minutes?\b/
+  );
+  if (minutesOnly) {
+    const minutes = parseNumberPhrase(minutesOnly[1]);
+    if (minutes !== null && minutes > 0) return minutes / 60;
+  }
+
   const explicit = text.match(
     /(?:worked|took|spent)?\s*(?:for\s+)?([\w.-]+(?:\s+[\w.-]+){0,5})\s+(?:hours?|hrs?)\b/
   );
@@ -233,10 +243,10 @@ function parseHours(transcript: string): number | null {
   }
 
   const arrivedRange = text.match(
-    /(?:arrived|started|began)(?:\s+work)?(?:\s+at)?\s+(.{1,55}?)\s+(?:and\s+)?(?:finished|ended|left|stopped)(?:\s+work)?(?:\s+at)?\s+(.{1,55}?)(?=\s+(?:my\s+)?(?:rate|materials?|parts?|supplies|I\s+(?:replaced|repaired|installed|fixed|completed|cleaned|removed|tested|resealed))\b|[.!?]|$)/i
+    /(?:arrived|started|began)(?:\s+work)?(?:\s+at)?\s+(.{1,55}?)\s+(?:and\s+)?(?:finished|ended|left|stopped)(?:\s+work)?(?:\s+at)?\s+(.{1,55}?)(?=\s+(?:my\s+)?(?:hourly\s+)?(?:rate|materials?|parts?|supplies|I\s+(?:replaced|repaired|installed|fixed|completed|cleaned|removed|tested|resealed))\b|[.!?]|$)/i
   );
   const simpleRange = text.match(
-    /\bfrom\s+(.{1,40}?)\s+(?:to|until|through)\s+(.{1,75}?)(?=\s+(?:and\s+then|then|(?:I|we)\s+worked|(?:I(?:'m|\s+am)?\s+)?(?:charging|billing|charge)|(?:my\s+)?(?:rate|materials?|parts?|supplies|client))\b|[.!?]|$)/i
+    /\bfrom\s+(.{1,40}?)\s+(?:to|until|through)\s+(.{1,75}?)(?=\s+(?:and\s+then|then|(?:I|we)\s+worked|(?:I(?:'m|\s+am)?\s+)?(?:charging|billing|charge)|(?:my\s+)?(?:hourly\s+)?(?:rate|materials?|parts?|supplies|client))\b|[.!?]|$)/i
   );
   const range = arrivedRange || simpleRange;
   if (range) {
@@ -253,6 +263,14 @@ function parseHours(transcript: string): number | null {
 
 function parseRate(transcript: string): number | null {
   const text = transcript.toLowerCase();
+  const hourlyRateClause = text.match(/hourly\s+rate(?:\s+is|\s+was|\s+of)?\s+(.{1,60}?)\s+dollars?\b/);
+  if (hourlyRateClause) {
+    const corrected = hourlyRateClause[1].split(/\b(?:no|sorry|rather|correction)\b/).pop() || hourlyRateClause[1];
+    const amounts = moneyAmounts(corrected);
+    if (amounts.length > 0) return amounts[amounts.length - 1];
+    const value = parseNumberPhrase(corrected);
+    if (value !== null) return value;
+  }
   const rateClause = text.match(
     /(?:hourly\s+rate|rate|charging|charge|billing|bill)(.{0,100}?)(?:dollars?\s+)?(?:an|per|each)\s+hour\b/
   );

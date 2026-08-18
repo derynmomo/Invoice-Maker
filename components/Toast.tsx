@@ -21,7 +21,7 @@ export default function ToastContainer({ toasts, onDismiss }: ToastContainerProp
   if (toasts.length === 0) return null;
 
   return (
-    <div className="no-print fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-[92%] max-w-sm">
+    <div className="no-print fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-[92%] max-w-sm mb-[env(safe-area-inset-bottom)]">
       {toasts.map((t) => (
         <div
           key={t.id}

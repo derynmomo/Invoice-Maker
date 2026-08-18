@@ -12,6 +12,7 @@ import {
   isValidPhone,
   todayISO,
 } from '@/lib/calculations';
+import { canShareInvoice, downloadPdfClient, isNativeApp, shareInvoiceText } from '@/lib/mobile';
 import { emptyInvoice, type ExtractedInvoiceFields, type InvoiceFormData, type SendSmsResponse } from '@/lib/types';
 
 type FieldErrors = Partial<Record<keyof InvoiceFormData, string>>;
@@ -29,6 +30,11 @@ export default function Home() {
 
   useEffect(() => {
     setInvoiceId(generateInvoiceId());
+    if (!isNativeApp() && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {
+        // PWA install is optional — ignore registration failures.
+      });
+    }
   }, []);
   const [smsState, setSmsState] = useState<SmsState>('idle');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
@@ -217,25 +223,36 @@ export default function Home() {
 
     setPdfState('generating');
     try {
-      const res = await fetch('/api/generate-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data, totals, invoiceId, generatedOn }),
-      });
-      if (!res.ok) {
-        const errorBody = await res.json().catch(() => null);
-        throw new Error(errorBody?.error || 'Could not generate the PDF.');
-      }
+      if (isNativeApp()) {
+        await downloadPdfClient({ data, totals, invoiceId, generatedOn });
+      } else {
+        // On the hosted web app the server generates the PDF. If the server
+        // route is unreachable (e.g. the static export used by the app),
+        // fall back to generating it right in the browser.
+        try {
+          const res = await fetch('/api/generate-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data, totals, invoiceId, generatedOn }),
+          });
+          if (!res.ok) {
+            const errorBody = await res.json().catch(() => null);
+            throw new Error(errorBody?.error || 'Could not generate the PDF.');
+          }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${invoiceId.replace('#', '') || 'invoice'}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = `${invoiceId.replace('#', '') || 'invoice'}.pdf`;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch {
+          await downloadPdfClient({ data, totals, invoiceId, generatedOn });
+        }
+      }
       pushToast('Invoice PDF downloaded.', 'success');
     } catch (error: any) {
       pushToast(error?.message || 'Could not generate the PDF. Please try again.', 'error');
@@ -251,27 +268,55 @@ export default function Home() {
     }
 
     setSmsState('sending');
-    try {
-      const res = await fetch('/api/send-sms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toPhoneNumber: data.phone,
-          clientName: `${data.firstName} ${data.lastName}`.trim(),
-          workSummary: data.description || 'services rendered',
-          totalDue: totals.total,
-          invoiceId,
-        }),
-      });
-      const json: SendSmsResponse = await res.json();
+    const clientName = `${data.firstName} ${data.lastName}`.trim();
+    const workSummary = data.description || 'services rendered';
+    const totalDueText = currency(totals.total);
 
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || 'Failed to send SMS.');
+    try {
+      if (isNativeApp()) {
+        // In the app there is no Twilio backend — open the OS share sheet
+        // (Messages / SMS) with the invoice summary pre-filled.
+        await shareInvoiceText({ clientName, invoiceId, workSummary, totalDue: totalDueText });
+        setSmsState('sent');
+        pushToast('Invoice ready — pick Messages to text it.', 'success');
+        setTimeout(() => setSmsState('idle'), 4000);
+        return;
       }
 
-      setSmsState('sent');
-      pushToast(`Invoice sent via SMS to ${data.phone}.`, 'success');
-      setTimeout(() => setSmsState('idle'), 4000);
+      try {
+        const res = await fetch('/api/send-sms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            toPhoneNumber: data.phone,
+            clientName,
+            workSummary,
+            totalDue: totals.total,
+            invoiceId,
+          }),
+        });
+        const json: SendSmsResponse = await res.json();
+
+        if (!res.ok || !json.success) {
+          throw new Error(json.error || 'Failed to send SMS.');
+        }
+
+        setSmsState('sent');
+        pushToast(`Invoice sent via SMS to ${data.phone}.`, 'success');
+        setTimeout(() => setSmsState('idle'), 4000);
+        return;
+      } catch (serverError) {
+        // No Twilio backend here (e.g. static export on a phone) — hand off
+        // to the OS share sheet instead of failing.
+        if (await canShareInvoice()) {
+          await shareInvoiceText({ clientName, invoiceId, workSummary, totalDue: totalDueText });
+          setSmsState('sent');
+          pushToast('Invoice ready — pick Messages to text it.', 'success');
+          setTimeout(() => setSmsState('idle'), 4000);
+          return;
+        }
+        throw serverError;
+      }
     } catch (err: any) {
       setSmsState('error');
       pushToast(err?.message || 'Could not send the SMS. Please try again.', 'error');
@@ -283,6 +328,7 @@ export default function Home() {
     <>
       {/* ============ TOP BAR ============ */}
       <header className="no-print sticky top-0 z-30 bg-canvas/90 backdrop-blur border-b border-rule">
+        <div className="pt-[env(safe-area-inset-top)]" aria-hidden="true" />
         <div className="max-w-[1400px] mx-auto px-5 sm:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-[6px] bg-ink flex items-center justify-center">
@@ -370,7 +416,7 @@ export default function Home() {
       {/* ============ MOBILE: floating sticky preview tab ============ */}
       <button
         onClick={() => setMobilePreviewOpen(true)}
-        className="no-print lg:hidden fixed bottom-5 right-5 z-40 bg-ink text-paper font-display font-semibold text-[13px] px-5 py-3 rounded-full shadow-lg flex items-center gap-2"
+        className="no-print lg:hidden fixed bottom-[calc(env(safe-area-inset-bottom)+20px)] right-5 z-40 bg-ink text-paper font-display font-semibold text-[13px] px-5 py-3 rounded-full shadow-lg flex items-center gap-2"
       >
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
@@ -386,7 +432,7 @@ export default function Home() {
 
       {mobilePreviewOpen && (
         <div className="no-print lg:hidden fixed inset-0 z-50 bg-ink/40 flex flex-col justify-end">
-          <div className="bg-canvas rounded-t-[16px] max-h-[90vh] overflow-y-auto p-5 pb-8">
+          <div className="bg-canvas rounded-t-[16px] max-h-[90vh] overflow-y-auto p-5 pb-[calc(env(safe-area-inset-bottom)+2rem)]">
             <div className="flex items-center justify-between mb-4">
               <p className="font-mono text-[10px] uppercase tracking-wider text-slate-ink">Live preview</p>
               <button
