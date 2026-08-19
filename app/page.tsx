@@ -75,20 +75,23 @@ function HomeContent() {
     setData((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  function validateField(field: keyof InvoiceFormData, value: string): string | undefined {
-    switch (field) {
-      case 'firstName':
-        return value.trim() ? undefined : t(language, 'firstNameRequired');
-      case 'lastName':
-        return value.trim() ? undefined : t(language, 'lastNameRequired');
-      case 'email':
-        return !value.trim() || isValidEmail(value) ? undefined : t(language, 'emailInvalid');
-      case 'phone':
-        return isValidPhone(value) ? undefined : t(language, 'phoneInvalid');
-      default:
-        return undefined;
-    }
-  }
+  const validateField = useCallback(
+    (field: keyof InvoiceFormData, value: string): string | undefined => {
+      switch (field) {
+        case 'firstName':
+          return value.trim() ? undefined : t(language, 'firstNameRequired');
+        case 'lastName':
+          return value.trim() ? undefined : t(language, 'lastNameRequired');
+        case 'email':
+          return !value.trim() || isValidEmail(value) ? undefined : t(language, 'emailInvalid');
+        case 'phone':
+          return isValidPhone(value) ? undefined : t(language, 'phoneInvalid');
+        default:
+          return undefined;
+      }
+    },
+    [language]
+  );
 
   const handleBlurField = useCallback(
     (field: keyof InvoiceFormData) => {
@@ -96,7 +99,7 @@ function HomeContent() {
       const message = validateField(field, value);
       setErrors((prev) => ({ ...prev, [field]: message }));
     },
-    [data]
+    [data, validateField]
   );
 
   function validateForPdf(): boolean {
@@ -287,6 +290,9 @@ function HomeContent() {
     const workSummary = data.description || t(language, 'servicesRendered');
     const totalDueText = currency(totals.total, language);
     const shareOptions = { clientName, invoiceId, workSummary, totalDue: totalDueText, lang: language };
+    const invoiceUrl = process.env.NEXT_PUBLIC_INVOICE_BASE_URL
+      ? `${process.env.NEXT_PUBLIC_INVOICE_BASE_URL.replace(/\/+$/, '')}/invoice/${invoiceId}`
+      : undefined;
 
     try {
       if (isNativeApp()) {
@@ -309,6 +315,7 @@ function HomeContent() {
             workSummary,
             totalDue: totals.total,
             invoiceId,
+            invoiceUrl,
             lang: language,
           }),
         });
@@ -402,6 +409,13 @@ function HomeContent() {
               className="font-mono text-[10px] uppercase px-2.5 py-2 rounded-[4px] border border-rule text-slate-ink"
             >
               {t(language, 'clear')}
+            </button>
+            <button
+              onClick={handleExportJson}
+              aria-label={t(language, 'exportJson')}
+              className="font-mono text-[10px] uppercase px-2.5 py-2 rounded-[4px] border border-rule text-slate-ink"
+            >
+              {t(language, 'json')}
             </button>
             <button
               onClick={handleDownloadPdf}

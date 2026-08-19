@@ -93,6 +93,8 @@ function toISO(date: Date): string {
 function parseNumberPhrase(value: string): number | null {
   const mixedFraction = value.match(/(\d+)\s+(?:and\s+)?1\s*\/\s*2/);
   if (mixedFraction) return Number(mixedFraction[1]) + 0.5;
+  const halfPhrase = value.match(/(\d+(?:\.\d+)?)\s+(?:and\s+)?a?\s*half/i);
+  if (halfPhrase) return Number(halfPhrase[1]) + 0.5;
   const numeric = value.replace(/,/g, '').match(/-?\d+(?:\.\d+)?/);
   if (numeric) return Number(numeric[0]);
 
@@ -245,8 +247,9 @@ function parseHours(transcript: string): number | null {
     if (hours !== null && minutes !== null && minutes < 60) return hours + minutes / 60;
   }
 
-  const words = text.replace(/[^a-z0-9\s.-]/g, ' ').split(/\s+/).filter(Boolean);
-  const isNumberToken = (token: string) => NUMBER_WORDS.has(token) || /^\d+(?:\.\d+)?$/.test(token);
+  const words = text.replace(/[^a-z0-9\s./-]/g, ' ').split(/\s+/).filter(Boolean);
+  const isNumberToken = (token: string) =>
+    NUMBER_WORDS.has(token) || /^\d+(?:\.\d+)?$/.test(token) || /^\d+\s*\/\s*\d+$/.test(token);
   const isRateUnit = (token: string) => /^(?:per|an|each)$/.test(token);
 
   for (let i = 0; i < words.length; i++) {
