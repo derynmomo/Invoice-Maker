@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import InvoiceForm from '@/components/InvoiceForm';
-import InvoicePreview, { SmsState } from '@/components/InvoicePreview';
+import InvoicePreview from '@/components/InvoicePreview';
 import ToastContainer, { ToastMessage } from '@/components/Toast';
 import { LanguageProvider, useLanguage } from '@/components/LanguageContext';
 import { t } from '@/lib/i18n';
@@ -11,11 +11,10 @@ import {
   currency,
   generateInvoiceId,
   isValidEmail,
-  isValidPhone,
   todayISO,
 } from '@/lib/calculations';
-import { canShareInvoice, downloadPdfClient, isNativeApp, shareInvoiceText } from '@/lib/mobile';
-import { emptyInvoice, type ExtractedInvoiceFields, type InvoiceFormData, type SendSmsResponse } from '@/lib/types';
+import { canSharePdfWeb, downloadPdfClient, isNativeApp, sharePdfClient, sharePdfWeb } from '@/lib/mobile';
+import { emptyInvoice, type ExtractedInvoiceFields, type InvoiceFormData } from '@/lib/types';
 
 type FieldErrors = Partial<Record<keyof InvoiceFormData, string>>;
 
@@ -47,7 +46,6 @@ function HomeContent() {
       });
     }
   }, []);
-  const [smsState, setSmsState] = useState<SmsState>('idle');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [pdfState, setPdfState] = useState<'idle' | 'generating'>('idle');
@@ -84,8 +82,6 @@ function HomeContent() {
           return value.trim() ? undefined : t(language, 'lastNameRequired');
         case 'email':
           return !value.trim() || isValidEmail(value) ? undefined : t(language, 'emailInvalid');
-        case 'phone':
-          return isValidPhone(value) ? undefined : t(language, 'phoneInvalid');
         default:
           return undefined;
       }
@@ -110,18 +106,6 @@ function HomeContent() {
     setErrors((prev) => ({ ...prev, ...next }));
     return !next.firstName && !next.lastName;
   }
-
-  function validateForSms(): boolean {
-    const next: FieldErrors = {
-      firstName: validateField('firstName', data.firstName),
-      lastName: validateField('lastName', data.lastName),
-      phone: validateField('phone', data.phone),
-    };
-    setErrors((prev) => ({ ...prev, ...next }));
-    return !next.firstName && !next.lastName && !next.phone;
-  }
-
-  const canSendSms = data.firstName.trim().length > 0 && data.lastName.trim().length > 0 && isValidPhone(data.phone);
 
   // -------------------------------------------------------------------
   // Voice autofill
@@ -195,14 +179,13 @@ function HomeContent() {
   );
 
   // -------------------------------------------------------------------
-  // Actions: clear, export, print, SMS
+  // Actions: clear, export, download PDF, share PDF
   // -------------------------------------------------------------------
   function handleClearForm() {
     setData({ ...emptyInvoice, serviceDate: todayISO() });
     setErrors({});
     setAutofilled(new Set());
     setInvoiceId(generateInvoiceId());
-    setSmsState('idle');
     pushToast(t(language, 'toastFormCleared'), 'info');
   }
 
@@ -279,72 +262,37 @@ function HomeContent() {
     }
   }
 
-  async function handleSendSms() {
-    if (!validateForSms()) {
-      pushToast(t(language, 'toastSmsNeedsFields'), 'error');
+  async function handleSharePdf() {
+    if (!validateForPdf()) {
+      pushToast(t(language, 'toastPdfNeedsName'), 'error');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    setSmsState('sending');
-    const clientName = `${data.firstName} ${data.lastName}`.trim();
-    const workSummary = data.description || t(language, 'servicesRendered');
-    const totalDueText = currency(totals.total, language);
-    const shareOptions = { clientName, invoiceId, workSummary, totalDue: totalDueText, lang: language };
-    const invoiceUrl = process.env.NEXT_PUBLIC_INVOICE_BASE_URL
-      ? `${process.env.NEXT_PUBLIC_INVOICE_BASE_URL.replace(/\/+$/, '')}/invoice/${invoiceId}`
-      : undefined;
-
+    setPdfState('generating');
+    const pdfRequest = { data, totals, invoiceId, generatedOn, lang: language };
     try {
       if (isNativeApp()) {
-        // In the app there is no Twilio backend — open the OS share sheet
-        // (Messages / SMS) with the invoice summary pre-filled.
-        await shareInvoiceText(shareOptions);
-        setSmsState('sent');
-        pushToast(t(language, 'toastShareReady'), 'success');
-        setTimeout(() => setSmsState('idle'), 4000);
+        // In the app there is no server — open the OS share sheet with the
+        // PDF as a file (Mail, AirDrop, Messages, WhatsApp…).
+        await sharePdfClient(pdfRequest);
         return;
       }
 
-      try {
-        const res = await fetch('/api/send-sms', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            toPhoneNumber: data.phone,
-            clientName,
-            workSummary,
-            totalDue: totals.total,
-            invoiceId,
-            invoiceUrl,
-            lang: language,
-          }),
-        });
-        const json: SendSmsResponse = await res.json();
-
-        if (!res.ok || !json.success) {
-          throw new Error(json.error || t(language, 'toastSmsFailed'));
-        }
-
-        setSmsState('sent');
-        pushToast(t(language, 'toastSmsSentTo', { phone: data.phone }), 'success');
-        setTimeout(() => setSmsState('idle'), 4000);
-        return;
-      } catch (serverError) {
-        // No Twilio backend here (e.g. static export on a phone) — hand off
-        // to the OS share sheet instead of failing.
-        if (await canShareInvoice()) {
-          await shareInvoiceText(shareOptions);
-          setSmsState('sent');
-          pushToast(t(language, 'toastShareReady'), 'success');
-          setTimeout(() => setSmsState('idle'), 4000);
-          return;
-        }
-        throw serverError;
+      if (canSharePdfWeb()) {
+        const result = await sharePdfWeb(pdfRequest);
+        // The user chose a target (or dismissed the sheet) — nothing to do.
+        if (result === 'shared' || result === 'cancelled') return;
       }
-    } catch (err: any) {
-      setSmsState('error');
-      pushToast(err?.message || t(language, 'toastSmsRetry'), 'error');
-      setTimeout(() => setSmsState('idle'), 2500);
+
+      // Desktop browsers / older devices have no file share API — fall back
+      // to downloading the PDF so the action always completes.
+      await downloadPdfClient(pdfRequest);
+      pushToast(t(language, 'toastPdfDownloaded'), 'success');
+    } catch (error: any) {
+      pushToast(error?.message || t(language, 'toastPdfRetry'), 'error');
+    } finally {
+      setPdfState('idle');
     }
   }
 
@@ -453,9 +401,8 @@ function HomeContent() {
               totals={totals}
               invoiceId={invoiceId}
               generatedOn={generatedOn}
-              smsState={smsState}
-              onSendSms={handleSendSms}
-              canSendSms={canSendSms}
+              isGeneratingPdf={pdfState === 'generating'}
+              onSharePdf={handleSharePdf}
             />
           </div>
         </div>
@@ -496,9 +443,8 @@ function HomeContent() {
               totals={totals}
               invoiceId={invoiceId}
               generatedOn={generatedOn}
-              smsState={smsState}
-              onSendSms={handleSendSms}
-              canSendSms={canSendSms}
+              isGeneratingPdf={pdfState === 'generating'}
+              onSharePdf={handleSharePdf}
             />
           </div>
         </div>

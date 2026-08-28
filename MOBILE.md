@@ -7,10 +7,10 @@ same React code runs in the native WebView, with two native additions:
 - **Speech recognition** goes through `@capacitor-community/speech-recognition`
   (`lib/speech.ts`), so voice works on iPhone and Android inside the app (the
   browser Web Speech API is still used on the plain web).
-- **PDF + SMS** work without a server: `lib/mobile.ts` generates the PDF
-  client-side with `pdf-lib` and hands the invoice to the OS share sheet
-  (Messages/SMS) instead of Twilio. The Twilio path still runs on the hosted
-  web version.
+- **PDF + sharing** work without a server: `lib/mobile.ts` generates the PDF
+  client-side with `pdf-lib` and hands it to the OS share sheet (AirDrop,
+  Mail, Messages, WhatsApp…) via `@capacitor/share`. The hosted web version
+  still uses the server only for PDF generation.
 
 ## Prerequisites
 
@@ -83,8 +83,9 @@ These values must be globally unique and match your developer accounts:
   `android/app/src/main/AndroidManifest.xml`.
 - **Versioning** — iOS `MARKETING_VERSION` / `CURRENT_PROJECT_VERSION` and
   Android `versionName` / `versionCode` are set to 1.0 / 1. Bump on each release.
-- **SMS** — the app itself never calls Twilio; it uses the native share sheet,
-  so no server is required for the phone builds.
+- **Sharing** — the app never calls any messaging API; it opens the native
+  share sheet with the PDF, so no server or third-party service is required
+  for the phone builds.
 - **App Store Connect** — create the app, upload the archive from Xcode
   (Product → Archive), fill metadata (screenshots, description, privacy URL),
   and submit for review. Same flow via Play Console for Android (needs a

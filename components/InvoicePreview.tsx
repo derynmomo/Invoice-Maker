@@ -6,16 +6,13 @@ import { useLanguage } from './LanguageContext';
 import { t } from '@/lib/i18n';
 import type { InvoiceFormData, Totals } from '@/lib/types';
 
-export type SmsState = 'idle' | 'sending' | 'sent' | 'error';
-
 interface InvoicePreviewProps {
   data: InvoiceFormData;
   totals: Totals;
   invoiceId: string;
   generatedOn: string;
-  smsState: SmsState;
-  onSendSms: () => void;
-  canSendSms: boolean;
+  isGeneratingPdf: boolean;
+  onSharePdf: () => void;
 }
 
 export default function InvoicePreview({
@@ -23,9 +20,8 @@ export default function InvoicePreview({
   totals,
   invoiceId,
   generatedOn,
-  smsState,
-  onSendSms,
-  canSendSms,
+  isGeneratingPdf,
+  onSharePdf,
 }: InvoicePreviewProps) {
   const { language } = useLanguage();
   const fullName = (data.firstName + ' ' + data.lastName).trim() || t(language, 'clientFallback');
@@ -146,33 +142,26 @@ export default function InvoicePreview({
         </div>
       </div>
 
-      {/* Send via SMS — primary action, sits just below the invoice */}
+      {/* Share PDF — hands the PDF to the OS share sheet */}
       <div className="no-print mt-4">
         <button
           type="button"
-          onClick={onSendSms}
-          disabled={!canSendSms || smsState === 'sending'}
+          onClick={onSharePdf}
+          disabled={isGeneratingPdf}
           className={clsx(
             'w-full flex items-center justify-center gap-2.5 py-3.5 rounded-[8px] font-display font-semibold text-[14.5px] transition-colors',
-            smsState === 'sent'
-              ? 'bg-ledger/15 text-ledger-dark border border-ledger'
-              : 'bg-ink text-paper hover:bg-ink/90',
-            (!canSendSms || smsState === 'sending') && 'opacity-50 cursor-not-allowed'
+            'bg-ink text-paper hover:bg-ink/90',
+            isGeneratingPdf && 'opacity-50 cursor-not-allowed'
           )}
         >
-          {smsState === 'sending' && (
+          {isGeneratingPdf && (
             <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2.5" opacity="0.3" />
               <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" />
             </svg>
           )}
-          {smsState === 'sent'
-            ? t(language, 'smsSentAgain')
-            : smsState === 'sending'
-              ? t(language, 'smsSending')
-              : t(language, 'sendViaSms')}
+          {isGeneratingPdf ? t(language, 'generatingPdf') : t(language, 'sharePdf')}
         </button>
-        {!canSendSms && <p className="text-[11px] text-slate-ink mt-2 text-center">{t(language, 'smsDisabledHelper')}</p>}
       </div>
     </div>
   );

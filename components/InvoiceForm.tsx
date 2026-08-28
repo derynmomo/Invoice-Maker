@@ -99,7 +99,6 @@ export default function InvoiceForm({
           <div>
             <label className="field-label" htmlFor="phone">{t(language, 'phoneLabel')}</label>
             <input
-              required
               id="phone"
               type="tel"
               placeholder="+1 514 555 0134"
@@ -109,7 +108,6 @@ export default function InvoiceForm({
               className={fieldClass('phone')}
             />
             {errors.phone && <p className="text-[11px] text-danger mt-1">{errors.phone}</p>}
-            <p className="text-[10.5px] text-slate-ink mt-1">{t(language, 'phoneHelper')}</p>
           </div>
           <div>
             <label className="field-label" htmlFor="email">{t(language, 'emailLabel')}</label>

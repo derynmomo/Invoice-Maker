@@ -2,7 +2,7 @@
 
 // Mobile (Capacitor) builds use a fully static export so the app can be
 // bundled and served from on-device storage. Normal `next build` keeps the
-// server API routes (PDF + Twilio SMS) for the hosted web app.
+// server API route (PDF generation) for the hosted web app.
 const isExport = process.env.EXPORT_BUILD === 'true';
 
 const nextConfig = {

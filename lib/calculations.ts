@@ -81,21 +81,6 @@ export function generateInvoiceId(date = new Date()): string {
   return `INV-${yyyy}${mm}${dd}-${suffix}`;
 }
 
-/** Validates E.164-ish phone numbers loosely (allows spaces, dashes, parens, leading +). */
-export function isValidPhone(value: string): boolean {
-  const digits = value.replace(/[^\d]/g, '');
-  return digits.length >= 10 && digits.length <= 15;
-}
-
 export function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-/** Normalizes a phone number to E.164 for the SMS API (defaults to +1 if no country code given). */
-export function toE164(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.startsWith('+')) return '+' + trimmed.slice(1).replace(/[^\d]/g, '');
-  const digits = trimmed.replace(/[^\d]/g, '');
-  if (digits.length === 10) return '+1' + digits; // assume NANP if no country code
-  return '+' + digits;
 }

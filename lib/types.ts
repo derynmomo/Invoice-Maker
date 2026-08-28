@@ -52,22 +52,6 @@ export interface ExtractResponse {
   rawTranscript: string;
 }
 
-export interface SendSmsRequest {
-  toPhoneNumber: string;
-  clientName: string;
-  workSummary: string;
-  totalDue: number;
-  invoiceId: string;
-  invoiceUrl?: string;
-  lang?: Language;
-}
-
-export interface SendSmsResponse {
-  success: boolean;
-  sid?: string;
-  error?: string;
-}
-
 export interface GeneratePdfRequest {
   data: InvoiceFormData;
   totals: Totals;
