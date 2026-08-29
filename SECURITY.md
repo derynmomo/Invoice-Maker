@@ -1,185 +1,217 @@
-# Ledger — Mobile / Web AppSec Assessment
+# Ledger — Security Review
 
 **Project:** Ledger — Voice-Enabled Invoice Maker
-**Assessment date:** 2026-08-29
-**Scope:** iOS + Android (Capacitor), hosted web app, and the `/api/generate-pdf` server route
-**Standard:** Assessed against the OWASP **Mobile Application Security Verification Standard (MASVS)** and cross-referenced with **MASWE** weakness classes. This document is a learning artifact written by the app author.
+**Review date:** 2026-08-29
+**Scope:** The mobile app (iOS and Android, built with Capacitor) and the
+optional hosted web version. Ledger used to be a plain website, but on this
+branch it's really a mobile app — a native shell around the same React code,
+with speech recognition and on-device PDF sharing. The web build still exists
+but it's secondary now.
+**Standard:** I went through the app against the OWASP **MASVS** (a common
+checklist for mobile app security). This isn't an official audit by a firm — it's
+my own review, written by me, and a few of the boxes don't even apply to an app
+like this.
 
 ---
 
-## Executive summary
+## Quick summary
 
-Ledger is a small, intentionally minimal invoice app with no user accounts, no
-persistent data storage, and no backend database. An initial security review
-was performed against OWASP MASVS. Because the app deliberately stores no data
-and has no authentication surface, most high-severity mobile- and web-security
-categories do not apply. Three concrete controls were implemented to close the
-real, in-scope surface: server-side request hardening (input validation, size
-cap, rate limiting), disabling remote WebView debugging in release builds, and
-adding a continuous dependency-vulnerability scan to CI. Residual items are
-documented below as accepted risk with explicit rationale.
+Ledger is a small, deliberately simple invoice app. There are **no user
+accounts**, it **doesn't save anything**, and there's **no backend database**.
+You open it, say your invoice out loud (or type it), and it makes a PDF you
+share straight from your phone. Because there are no accounts and nothing is
+stored, a lot of the scary security stuff just doesn't apply here — there's no
+place to break into and no data to steal.
+
+I still did a pass and fixed the things that were actually reachable:
+
+1. The one server endpoint (only used by the web version) could be spammed.
+2. The app's debug console could accidentally ship in a release build.
+3. There was no automatic check for libraries with known security holes.
+
+I explain each of those below, plus the things I chose **not** to add and why.
+The whole point of this was to learn and to be able to defend each choice.
 
 ---
 
-## Terminology
+## How I'm labeling things
 
-| Disposition | Meaning |
+| Label | What it means |
 |---|---|
-| **Fixed** | A finding addressed in this pass, with how/where it was fixed. |
-| **Accepted risk** | A real weakness judged low-impact for *this* app, intentionally not fixed, with reason. |
-| **N/A** | A MASVS category that does not apply because the app does not have that surface (no accounts, no data stored, etc.). |
+| **Fixed** | I found something real and did something about it. Details below. |
+| **Accepted risk** | A real weakness, but for *this* app it's not worth fixing — I explain why. |
+| **N/A** | The category doesn't even apply, because the app doesn't have that feature. |
 
 ---
 
-## 1. Findings — Fixed
+## 1. Things I fixed
 
-### 1.1 Unauthenticated, unlimited PDF generation endpoint (DoS / resource abuse)
+### 1.1 The PDF endpoint could be spammed (web version only)
 
-- **OWASP:** MASVS-CODE-3 (Unsafe handling of untrusted data) / MASWE-0050
-- **Severity (pre-fix):** High
+- **OWASP:** MASVS-CODE-3 (unsafe handling of untrusted data) — MASWE-0050
+- **Severity before the fix:** High
 - **File:** `app/api/generate-pdf/route.ts`
 
-**Finding:** The only server endpoint, `POST /api/generate-pdf`, accepted arbitrary
-JSON with **no authentication, no request-size limit, no rate limit, and only
-shallow field checks**. Because the app has no login, anyone could flood it with
-large/malformed requests, wasting CPU and memory (a denial-of-service / resource-
-exhaustion surface), and pass oversized strings or non-finite numbers into the
-PDF renderer (`pdf-lib`).
+**The problem:** The only server endpoint, `POST /api/generate-pdf`, accepts
+JSON and makes a PDF from it. Since there's no login, **anyone on the internet
+could just send it requests** — a giant request, a huge number, a weird string —
+and the server would do the work anyway. If a bunch of people did that at once,
+it would chew up CPU and memory for no reason, which is basically a mini
+denial-of-service. It also let people shove oversized or weird values into the
+PDF tool (`pdf-lib`), which is asking for trouble.
 
-**Fix applied (all in `app/api/generate-pdf/route.ts`):**
-1. **Body size cap** — requests larger than 100 KB are rejected with `413` before parsing.
-2. **Field-level validation** — required fields, string length caps, and strict
-   JSON-number type checks; non-finite or absurd values (magnitude > 1e9) are rejected with `400`.
-3. **Rate limiting** — a sliding-window limiter allows 30 requests/minute per IP,
-   returning `429` beyond that (in-memory; single-instance, sufficient for now).
-4. **Robust JSON parsing** — malformed bodies return `400` rather than a server error.
+**What I changed** (all in `app/api/generate-pdf/route.ts`):
+1. **A size limit.** If a request's body is bigger than 100 KB, I reject it
+   before even looking at what's inside. (Web browsers never send anything that
+   big for a real invoice, so this is safe to cap.)
+2. **Checking the fields.** I now check that all the required fields exist,
+   text isn't crazy-long, and the numbers are actually numbers. Huge or
+   non-finite numbers get thrown out. An invoice for `99999999999` hours is
+   not a real invoice.
+3. **A request limit.** Each IP can only ask the server 30 times per minute.
+   Past that, it says "slow down" and won't do the work.
+4. **Better error handling.** If someone sends garbage that isn't even valid
+   JSON, it's caught and handled instead of crashing something.
 
-**Verification:** invalid/missing/oversized/out-of-range inputs return `400`/`413`;
-valid requests return a correct PDF (`200`); burst requests beyond the limit return `429`.
+**Did it work?** I tested it: bad input comes back with a clear error, an
+oversized request gets rejected, a burst of requests over the limit gets
+throttled, and a normal request still returns a correct PDF.
 
 ---
 
-### 1.2 Remote WebView debugging possible in a release build
+### 1.2 Debug mode could leak into the release app
 
-- **OWASP:** MASVS-RESILIENCE-4 / MASWE-0061 (Debug artifacts not removed); MASTG-BEST-0008, BEST-0022
-- **Severity (pre-fix):** Low
+- **OWASP:** MASVS-RESILIENCE-4 / MASWE-0061 (debug artifacts left in) — MASTG-BEST-0008, BEST-0022
+- **Severity before the fix:** Low
 - **Files:** `ios/debug.xcconfig`, `ios/App/App.xcodeproj/project.pbxproj`
 
-**Finding:** `debug.xcconfig` set `CAPACITOR_DEBUG = true` (used to enable the
-WebView's remote debugging console). It was referenced by the **Debug** build
-configurations, but nothing explicitly guarded the **Release** configuration.
-If `debug.xcconfig` were ever wired into (or leaked into) a release build, remote
-debugging could ship in production — allowing inspection/injection into the WebView,
-where invoice data lives.
+**The problem:** While you're building an app, it's really handy to turn on
+something called remote debugging — it lets you pop open a live console and
+inspect the screen, just like debugging a website. Capacitor does this with a
+setting called `CAPACITOR_DEBUG`. The catch: if that setting is ever on in the
+**release** build (the one people actually download), then someone who gets a
+hold of that debug console could poke around inside the app and look at the
+invoice data that's on screen. That's fine for a developer, not great for a
+real user.
 
-**Fix applied:**
-- Added an explicit `CAPACITOR_DEBUG = false` to both **Release** build configurations
-  in `project.pbxproj`, so release builds unambiguously disable WebView remote
-  debugging regardless of xcconfig wiring.
+**What I changed:** I looked at the build setup and saw that the Release
+configuration didn't explicitly turn debugging off — it just kind of... wasn't
+set, which left it up to chance. So I added `CAPACITOR_DEBUG = false` to both
+Release build settings in `project.pbxproj`. Now a release build is guaranteed
+to have debugging off, no matter what.
 
-**Verification:** `xcodebuild -showBuildSettings` confirms `CAPACITOR_DEBUG = false`
-for `-configuration Release` and `true` for `Debug`.
+**Did it work?** I ran `xcodebuild` and confirmed the Release build now shows
+debugging off, while the Debug build still shows it on for development.
 
 ---
 
-### 1.3 No continuous dependency-vulnerability scanning
+### 1.3 No automatic check for unsafe libraries
 
-- **OWASP:** MASVS-CODE-2 / MASWE-0044 (Dependencies with known vulnerabilities)
-- **Severity (pre-fix):** Medium
+- **OWASP:** MASVS-CODE-2 / MASWE-0044 (dependencies with known vulnerabilities)
+- **Severity before the fix:** Medium
 - **File:** `.github/workflows/ci.yml`
 
-**Finding:** There was no automated check for known vulnerabilities (CVEs) in the
-project's npm dependencies. Vulnerable transitive packages could be introduced or
-updated into without detection.
+**The problem:** Almost every app uses libraries ("dependencies"), and
+sometimes those libraries turn out to have known security holes. People publish
+these holes (called CVEs) so everyone can fix them. Before this change, nothing
+was automatically checking whether my dependencies had any. Something could be
+added and just sit there with a known hole, and nobody would notice.
 
-**Fix applied:**
-- Added an `npm audit --audit-level=high` step to the CI workflow so every push
-  and PR surfaces dependency vulnerabilities in the Actions log.
-- It is currently configured with `continue-on-error: true` — see **§2.1** for the
-  honest rationale (known issues exist that require a deferred major upgrade, so
-  the step *reports* rather than hard-blocks today).
+**What I changed:** I added a step to the CI pipeline (the automated checks that
+run on every push) that runs `npm audit --audit-level=high`. That flags any
+dependency with a known high-severity problem right in the build log.
+
+**One catch — why it doesn't fail the build:** Right now the audit does report
+some issues, and the only way to fully fix the main one is a big Next.js
+upgrade that I want to do carefully on its own. So I set this step up to **report
+the issues without failing** the whole build yet. That way it's still visible
+and catches any *new* problem, but it doesn't block everything while I sort out
+the one big upgrade. See **Section 2.1** for the full explanation.
 
 ---
 
-## 2. Findings — Accepted risk (with rationale)
+## 2. Accepted risks (I chose not to fix these — here's why)
 
-### 2.1 Known dependency vulnerabilities (npm audit)
+### 2.1 Known dependency vulnerabilities
 
 - **OWASP:** MASVS-CODE-2 / MASWE-0044
-- **Severity:** High (Next.js), Critical (tar, build-chain)
+- **Severity:** High (Next.js), Critical (tar, build tools)
 
-**Status: Accepted risk (tracked).**
+**The problem:** `npm audit` reports 13 issues (3 moderate, 9 high, 1 critical).
+I split them into two groups:
 
-**Finding (details):** `npm audit` reports 13 issues (3 moderate, 9 high, 1 critical).
-These fall into two groups:
+**Group 1 — Next.js (`next@14.2.35`).** Next.js is the framework that builds
+the web view that the app wraps. It's flagged in several advisories (things like
+DoS and request-smuggling). But here's the important part:
 
-1. **Runtime — Next.js (`next@14.2.35`)**: the deployed web framework is flagged
-   across many advisories (DoS, SSRF, cache poisoning, request smuggling).
-   - **Not applicable to this app's configuration:** the app does **not** use
-     `next/image`, middleware, Server Actions, rewrites, or redirects — the feature
-     paths most of these advisories target. Confirmed by code review.
-   - **Remediation requires a major upgrade:** the only patched version is
-     `next@16.3.3` (a major, potentially breaking upgrade from 14.x). Deferred and
-     tracked; the upgrade is scoped as a separate change so it can be reviewed
-     independently.
+- **This app doesn't use the risky features.** Most of those advisories are
+  about `next/image`, middleware, Server Actions, and rewrite rules — and this
+  app uses **none of those**. I checked. So most of the warnings don't actually
+  apply to how this app is built.
+- **Fixing it needs a big upgrade.** The only fully patched version is
+  `next@16` — but that's a *major version jump* from `14`, which can break
+  things. Doing that quietly tucked inside this change would be how people
+  break stuff. I'd rather do that as its own careful change and test it properly.
 
-2. **Build-chain tooling (`@capacitor/cli`, `@capacitor/assets`, `tar`, `xcode`,
-   `uuid`, `sharp`)**: these are **build-time tools**, not part of the shipped app
-   binary. They run only on a developer's machine / CI when generating the native
-   projects or icons. The `tar` critical is a supply-chain concern for the build
-   machine, not for end users of the app.
+**Group 2 — build-time tools** (`@capacitor/cli`, `@capacitor/assets`, `tar`,
+`xcode`, `uuid`, `sharp`). These aren't part of the app at all. They only run on
+a developer's computer (or in CI) while building the app or its icons. The
+`tar` critical one is about the build machine, not about people using the app.
 
-**Why `npm audit` uses `continue-on-error`:** hard-failing CI on known issues whose
-only fix is a deferred breaking upgrade would make every push red — a broken gate that
-nobody inspects. The step still runs and annotates every CI run, so **new** high/critical
-issues become visible immediately, while the current known set is documented and tracked here.
+**Why the CI step reports instead of failing:** If I made it fail on issues I
+already know about and can't fully fix without a big upgrade, then every single
+push would be red forever — and a check that's always red is a check nobody
+looks at. Better to have it running, visible, and catching anything *new*.
 
-**Recommended follow-up:** run the Next 16 upgrade in a dedicated PR and re-enable
-`npm audit --audit-level=high` without `continue-on-error` when the runtime tree is clean.
+**My plan:** do the Next 16 upgrade in its own pull request first, then turn the
+audit back into a hard fail once the code is clean.
 
 ---
 
-## 3. Findings — Not applicable (Sizing / scope)
+## 3. Things that don't apply (probably the most important section)
 
-These MASVS categories do not apply because of deliberate app design:
+A ton of app security checklists are about features this app simply doesn't have.
+Here's each one and why I marked it N/A:
 
-| OWASP category | Why N/A |
+| OWASP category | Why it's N/A |
 |---|---|
-| **MASVS-AUTH** (Authentication/Authorization) | No user accounts, no session, no login. There is nothing to authenticate. Adding auth would be artificial for this app. |
-| **MASVS-STORAGE** (Data at rest) | The app persists **nothing** — no database, no `localStorage`. Invoice data exists only in memory until the user exports. Nothing to protect at rest or in Keychain. |
-| **MASVS-CRYPTO** (Cryptography) | No secret/keys are stored or transmitted beyond HTTPS. No custom crypto is needed (and custom crypto would be a risk). |
-| **MASVS-NETWORK-1 / pinning** | All transport uses HTTPS. The app sends no tokens/secrets. Certificate pinning was **evaluated and rejected**: it protects against MITM where the app currently exposes nothing worth that threat-modeling cost, and it adds fragility (breaks if the cert rotates). |
-| **MASVS-RESILIENCE** (Jailbreak/root detection, obfuscation, anti-reversing) | Could be added, but the app is open-source by choice and holds no secrets worth protecting. Detection/obfuscation would add bugs without protecting anything real — judged out of proportion. |
-| **MASVS-PLATFORM** (Deep links, intents, IPC, clipboard) | No custom URL schemes, deep links, IPC, or exported components. The one share action is user-initiated and hands a PDF to the OS share sheet. |
-| **MASVS-PRIVACY** | Mic + speech are the only sensitive permissions, and both are declared with usage strings (`NSMicrophoneUsageDescription`, `NSSpeechRecognitionUsageDescription`, `RECORD_AUDIO`). No tracking, no analytics, no third-party data collection. |
-| **Server/Cloud (IAM, WAF, vault)** | The "backend" is a single static site + one API route. No cloud IAM, no secrets vault, no multi-instance infra to secure. |
+| **MASVS-AUTH** (login / accounts) | There are no accounts and no login. Nothing to break into. Adding a login to an app with no users would be fake security. |
+| **MASVS-STORAGE** (saving data safely) | The app **saves nothing**. No database, no local storage. The invoice only exists in memory until you share it. Nothing to protect. |
+| **MASVS-CRYPTO** (encryption) | No secrets or keys are stored or sent. It all goes over HTTPS, which handles the transport. Writing my own encryption would be *more* risky, not less. |
+| **MASVS-NETWORK-1 / certificate pinning** | Everything uses HTTPS already, and the app sends no tokens or secrets. I actually looked at adding "certificate pinning" but decided against it: it only helps against attacks the app isn't exposed to, and it makes the app break if the certificate ever changes. Not worth the fragility. |
+| **MASVS-RESILIENCE** (jailbreak detection, obfuscation) | This is an open-source app by choice, and there's no secret inside worth hiding. Adding jailbreak-detection or weird code-obfuscation would just add bugs, protecting nothing real. |
+| **MASVS-PLATFORM** (deep links, intents, etc.) | No custom deep links, no special URLs, nothing like that. The only share action is the user tapping "share" and handing a PDF to the OS. |
+| **MASVS-PRIVACY** | The only sensitive permission is the microphone for speech. I've declared why it's needed in the app's permission descriptions (`NSMicrophoneUsageDescription`, etc.). No tracking, no analytics, no selling of data. |
+| **Server / cloud stuff (IAM, WAF, secrets vault)** | There's no real backend. Just a static site and one API route (which only the web version even uses). No cloud accounts, no keys, nothing to guard. |
 
 ---
 
-## 4. What was NOT found (clean results)
+## 4. What I was glad NOT to find
 
-Manual review and `gitleaks` scanning found **no hardcoded secrets or API keys**
-in the repository or history. `.env*` files are correctly `gitignored`. These are
-positive findings worth keeping.
-
----
-
-## 5. Remediation roadmap (future)
-
-1. **Upgrade Next.js to a patched version** (currently `14.2.35` → `16.x`) in a
-   dedicated PR; then re-enable hard `npm audit` gating. (Top priority — see §2.1.)
-2. Optionally add TLS **certificate pinning** if/when a backend API handles
-   sensitive data or tokens. (Deferred — see §3, MASVS-NETWORK.)
-3. If the app ever gains persistence or accounts, add Keychain/Keystore-backed
-   encrypted storage and biometric auth at that point — justified only when such
-   data actually exists.
+I looked through the code and the git history for accidentally-committed secrets
+(API keys, passwords) using a tool called `gitleaks`, and there were **none**.
+The `.env` files are also properly set to never be tracked. That's a relief, and
+worth keeping that way.
 
 ---
 
-## 6. References
+## 5. What I'd do next (if this keeps going)
+
+1. **Upgrade Next.js** to a patched version (`14.2.35` → `16.x`) in its own
+   pull request, then turn the dependency audit back into a hard fail. This is
+   the main thing left — see **Section 2.1**.
+2. Maybe add **certificate pinning** if the app ever starts talking to a backend
+   that handles sensitive data. Right now it doesn't, so I'm leaving it out.
+3. If the app ever starts **saving data or adding accounts**, then I'd add proper
+   encrypted storage and (maybe) Face ID / fingerprint login. But I'll only do
+   that when there's actually something worth protecting, not before.
+
+---
+
+## 6. Where the standards come from
 
 - OWASP MASVS — https://mas.owasp.org/MASVS/
 - OWASP MASTG — https://mas.owasp.org/MASTG/
 - npm audit docs — https://docs.npmjs.com/cli/v10/commands/npm-audit
 - Gitleaks (secret scanning) — https://github.com/gitleaks/gitleaks
-- Capacitor remoting / `CAPACITOR_DEBUG` — https://capacitorjs.com/docs/guides/live-reload
+- Capacitor debug setting — https://capacitorjs.com/docs/guides/live-reload
