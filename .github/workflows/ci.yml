@@ -23,6 +23,13 @@ jobs:
           node-version: 18
           cache: npm
       - run: npm ci
+      # Dependency vulnerability scan. Currently reports known, documented
+      # issues (see SECURITY.md "Dependency vulnerabilities"); run with
+      # continue-on-error so it annotates every run without blocking while
+      # those are tracked. Any NEW vulnerability will appear here each push.
+      - name: Audit dependencies for known vulnerabilities
+        run: npm audit --audit-level=high
+        continue-on-error: true
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
