@@ -1,7 +1,11 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { createSpeechEngine, type SpeechEngine } from '@/lib/speech';
 import { extractInvoiceFieldsLocally } from '@/lib/localVoiceParser';
+import { extractInvoiceFieldsLocallyFr } from '@/lib/localVoiceParser.fr';
+import { t } from '@/lib/i18n';
+import { useLanguage } from './LanguageContext';
 import type { ExtractedInvoiceFields } from '@/lib/types';
 
 type VoiceState = 'idle' | 'listening' | 'processing' | 'error';
@@ -11,42 +15,20 @@ interface VoiceWidgetProps {
   onError: (message: string) => void;
 }
 
-interface BrowserSpeechRecognition {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  maxAlternatives: number;
-  onstart: (() => void) | null;
-  onresult: ((event: any) => void) | null;
-  onerror: ((event: any) => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
-  abort: () => void;
-}
-
-type SpeechRecognitionConstructor = new () => BrowserSpeechRecognition;
-
-declare global {
-  interface Window {
-    SpeechRecognition?: SpeechRecognitionConstructor;
-    webkitSpeechRecognition?: SpeechRecognitionConstructor;
-  }
-}
-
 const MAX_RECORDING_MS = 60_000;
 
 export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) {
+  const { language } = useLanguage();
   const [state, setState] = useState<VoiceState>('idle');
   const [seconds, setSeconds] = useState(0);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [lastTranscript, setLastTranscript] = useState('');
 
-  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const engineRef = useRef<SpeechEngine | null>(null);
   const transcriptRef = useRef('');
+  const startingRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const maxTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const ignoreEndRef = useRef(false);
 
   function clearTimers() {
     if (timerRef.current) clearInterval(timerRef.current);
@@ -55,88 +37,81 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
     maxTimeoutRef.current = null;
   }
 
+  function resetEngine() {
+    engineRef.current = null;
+    startingRef.current = false;
+  }
+
   function finishTranscript() {
     clearTimers();
     const transcript = transcriptRef.current.trim();
-    recognitionRef.current = null;
+    resetEngine();
 
     if (!transcript) {
-      onError("Couldn't make out any speech. Try again and speak for a few seconds.");
+      onError(t(language, 'noSpeech'));
       setState('error');
       return;
     }
 
     setState('processing');
     setLastTranscript(transcript);
-    const fields = extractInvoiceFieldsLocally(transcript);
+    const fields =
+      language === 'fr' ? extractInvoiceFieldsLocallyFr(transcript) : extractInvoiceFieldsLocally(transcript);
     onExtracted(fields, transcript);
     setState('idle');
   }
 
-  function startListening() {
-    if (state === 'listening' || state === 'processing') return;
-    const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!Recognition) {
-      onError('Speech recognition is not supported by this browser. Try Safari on iPhone or Chrome on Android.');
+  async function startListening() {
+    if (state === 'listening' || state === 'processing' || startingRef.current) return;
+
+    startingRef.current = true;
+    const locale = language === 'fr' ? 'fr-CA' : 'en-US';
+    const engine = await createSpeechEngine(locale, {
+      onStart: () => {
+        setState('listening');
+        setSeconds(0);
+        timerRef.current = setInterval(() => setSeconds((value) => value + 1), 1000);
+        maxTimeoutRef.current = setTimeout(() => engineRef.current?.stop(), MAX_RECORDING_MS);
+      },
+      onPartial: (text) => {
+        transcriptRef.current = text;
+        setLiveTranscript(text);
+      },
+      onResult: (text) => {
+        transcriptRef.current = text;
+      },
+      onEnd: () => {
+        finishTranscript();
+      },
+      onError: (message) => {
+        clearTimers();
+        resetEngine();
+        onError(message);
+        setState('error');
+      },
+    });
+
+    if (!engine) {
+      startingRef.current = false;
+      onError(t(language, 'notSupported'));
       setState('error');
       return;
     }
 
+    engineRef.current = engine;
     try {
-      const recognition = new Recognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
-      recognition.lang = navigator.language || 'en-CA';
-      transcriptRef.current = '';
-      ignoreEndRef.current = false;
-      setLiveTranscript('');
-      setSeconds(0);
-
-      recognition.onstart = () => {
-        setState('listening');
-        timerRef.current = setInterval(() => setSeconds((value) => value + 1), 1000);
-        maxTimeoutRef.current = setTimeout(() => recognition.stop(), MAX_RECORDING_MS);
-      };
-      recognition.onresult = (event: any) => {
-        let complete = '';
-        for (let index = 0; index < event.results.length; index += 1) {
-          complete += `${event.results[index][0]?.transcript || ''} `;
-        }
-        transcriptRef.current = complete.trim();
-        setLiveTranscript(transcriptRef.current);
-      };
-      recognition.onerror = (event: any) => {
-        ignoreEndRef.current = true;
-        clearTimers();
-        recognitionRef.current = null;
-        const messages: Record<string, string> = {
-          'not-allowed': 'Microphone access was denied. Allow microphone permission and try again.',
-          'audio-capture': 'No microphone was available on this device.',
-          'no-speech': 'No speech was detected. Try again and speak clearly.',
-          network: 'The browser speech recognizer could not connect. Check the device connection and try again.',
-          'language-not-supported': 'Speech recognition is not available for this device language.',
-        };
-        onError(messages[event.error] || 'Speech recognition stopped unexpectedly. Please try again.');
-        setState('error');
-      };
-      recognition.onend = () => {
-        if (ignoreEndRef.current) return;
-        finishTranscript();
-      };
-
-      recognitionRef.current = recognition;
-      recognition.start();
-    } catch (error) {
-      console.error('[voice] browser recognition error:', error);
-      onError('Could not start speech recognition on this device. Please try again.');
+      engine.start();
+    } catch {
+      clearTimers();
+      resetEngine();
+      onError(t(language, 'startError'));
       setState('error');
     }
   }
 
   function stopListening() {
     clearTimers();
-    recognitionRef.current?.stop();
+    engineRef.current?.stop();
   }
 
   function handleMicClick() {
@@ -153,7 +128,7 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
         type="button"
         onClick={handleMicClick}
         disabled={state === 'processing'}
-        aria-label={state === 'listening' ? 'Stop recording' : 'Start voice note'}
+        aria-label={state === 'listening' ? t(language, 'micStopAria') : t(language, 'micStartAria')}
         className={`relative w-12 h-12 rounded-full flex items-center justify-center shrink-0 transition-colors
           ${state === 'listening' ? 'bg-danger' : state === 'processing' ? 'bg-slate-ink' : 'bg-ledger hover:bg-ledger-dark'}
           disabled:cursor-wait`}
@@ -165,16 +140,16 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
       </button>
 
       <div className="flex-1 min-w-0">
-        <p className="font-display font-semibold text-[14.5px] leading-tight">Speak your invoice details</p>
+        <p className="font-display font-semibold text-[14.5px] leading-tight">{t(language, 'speakHeader')}</p>
         <p className="text-[12.5px] text-slate-ink mt-0.5 leading-snug">
-          {state === 'idle' && 'Uses your browser speech recognizer — no paid API credits required.'}
+          {state === 'idle' && t(language, 'offlineNote')}
           {state === 'listening' && (
             <span className="font-mono tabular text-danger">
-              Listening · {mm}:{ss} — tap again to stop
+              {t(language, 'listening', { time: `${mm}:${ss}` })}
             </span>
           )}
-          {state === 'processing' && 'Reading invoice details locally…'}
-          {state === 'error' && 'Tap the mic to try again.'}
+          {state === 'processing' && t(language, 'processing')}
+          {state === 'error' && t(language, 'tapToRetry')}
         </p>
         {state === 'listening' && liveTranscript && (
           <p className="text-[11px] text-slate-ink mt-1 line-clamp-2">{liveTranscript}</p>
@@ -184,7 +159,7 @@ export default function VoiceWidget({ onExtracted, onError }: VoiceWidgetProps) 
       {lastTranscript && state === 'idle' && (
         <details className="no-print shrink-0 hidden sm:block max-w-[220px]">
           <summary className="font-mono text-[10px] uppercase tracking-wide text-slate-ink cursor-pointer">
-            Last transcript
+            {t(language, 'lastTranscript')}
           </summary>
           <p className="text-[11px] text-slate-ink mt-1 leading-snug">{lastTranscript}</p>
         </details>

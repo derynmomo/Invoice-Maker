@@ -1,3 +1,5 @@
+import type { Language } from './i18n';
+
 // ---------------------------------------------------------------------------
 // Shared types used by the form, the live preview, and the API routes.
 // Keeping these in one place means the client and server always agree on
@@ -50,26 +52,12 @@ export interface ExtractResponse {
   rawTranscript: string;
 }
 
-export interface SendSmsRequest {
-  toPhoneNumber: string;
-  clientName: string;
-  workSummary: string;
-  totalDue: number;
-  invoiceId: string;
-  invoiceUrl?: string;
-}
-
-export interface SendSmsResponse {
-  success: boolean;
-  sid?: string;
-  error?: string;
-}
-
 export interface GeneratePdfRequest {
   data: InvoiceFormData;
   totals: Totals;
   invoiceId: string;
   generatedOn: string;
+  lang?: Language;
 }
 
 export interface Totals {

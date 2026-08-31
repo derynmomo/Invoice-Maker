@@ -2,21 +2,32 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import InvoiceForm from '@/components/InvoiceForm';
-import InvoicePreview, { SmsState } from '@/components/InvoicePreview';
+import InvoicePreview from '@/components/InvoicePreview';
 import ToastContainer, { ToastMessage } from '@/components/Toast';
+import { LanguageProvider, useLanguage } from '@/components/LanguageContext';
+import { t } from '@/lib/i18n';
 import {
   computeTotals,
   currency,
   generateInvoiceId,
   isValidEmail,
-  isValidPhone,
   todayISO,
 } from '@/lib/calculations';
-import { emptyInvoice, type ExtractedInvoiceFields, type InvoiceFormData, type SendSmsResponse } from '@/lib/types';
+import { canSharePdfWeb, downloadPdfClient, isNativeApp, sharePdfClient, sharePdfWeb } from '@/lib/mobile';
+import { emptyInvoice, type ExtractedInvoiceFields, type InvoiceFormData } from '@/lib/types';
 
 type FieldErrors = Partial<Record<keyof InvoiceFormData, string>>;
 
 export default function Home() {
+  return (
+    <LanguageProvider>
+      <HomeContent />
+    </LanguageProvider>
+  );
+}
+
+function HomeContent() {
+  const { language, setLanguage } = useLanguage();
   const [data, setData] = useState<InvoiceFormData>({ ...emptyInvoice, serviceDate: todayISO() });
   const [errors, setErrors] = useState<FieldErrors>({});
   const [autofilled, setAutofilled] = useState<Set<keyof InvoiceFormData>>(new Set());
@@ -29,8 +40,12 @@ export default function Home() {
 
   useEffect(() => {
     setInvoiceId(generateInvoiceId());
+    if (!isNativeApp() && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {
+        // PWA install is optional — ignore registration failures.
+      });
+    }
   }, []);
-  const [smsState, setSmsState] = useState<SmsState>('idle');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
   const [pdfState, setPdfState] = useState<'idle' | 'generating'>('idle');
@@ -58,20 +73,21 @@ export default function Home() {
     setData((prev) => ({ ...prev, ...patch }));
   }, []);
 
-  function validateField(field: keyof InvoiceFormData, value: string): string | undefined {
-    switch (field) {
-      case 'firstName':
-        return value.trim() ? undefined : 'First name is required.';
-      case 'lastName':
-        return value.trim() ? undefined : 'Last name is required.';
-      case 'email':
-        return !value.trim() || isValidEmail(value) ? undefined : 'Enter a valid email address.';
-      case 'phone':
-        return isValidPhone(value) ? undefined : 'Enter a valid phone number with area code.';
-      default:
-        return undefined;
-    }
-  }
+  const validateField = useCallback(
+    (field: keyof InvoiceFormData, value: string): string | undefined => {
+      switch (field) {
+        case 'firstName':
+          return value.trim() ? undefined : t(language, 'firstNameRequired');
+        case 'lastName':
+          return value.trim() ? undefined : t(language, 'lastNameRequired');
+        case 'email':
+          return !value.trim() || isValidEmail(value) ? undefined : t(language, 'emailInvalid');
+        default:
+          return undefined;
+      }
+    },
+    [language]
+  );
 
   const handleBlurField = useCallback(
     (field: keyof InvoiceFormData) => {
@@ -79,7 +95,7 @@ export default function Home() {
       const message = validateField(field, value);
       setErrors((prev) => ({ ...prev, [field]: message }));
     },
-    [data]
+    [data, validateField]
   );
 
   function validateForPdf(): boolean {
@@ -90,18 +106,6 @@ export default function Home() {
     setErrors((prev) => ({ ...prev, ...next }));
     return !next.firstName && !next.lastName;
   }
-
-  function validateForSms(): boolean {
-    const next: FieldErrors = {
-      firstName: validateField('firstName', data.firstName),
-      lastName: validateField('lastName', data.lastName),
-      phone: validateField('phone', data.phone),
-    };
-    setErrors((prev) => ({ ...prev, ...next }));
-    return !next.firstName && !next.lastName && !next.phone;
-  }
-
-  const canSendSms = data.firstName.trim().length > 0 && data.lastName.trim().length > 0 && isValidPhone(data.phone);
 
   // -------------------------------------------------------------------
   // Voice autofill
@@ -153,15 +157,18 @@ export default function Home() {
       }
 
       if (touched.length === 0) {
-        pushToast("Didn't catch any invoice details in that — try mentioning hours, rate, or the job itself.", 'error');
+        pushToast(t(language, 'toastVoiceNothing'), 'error');
         return;
       }
 
       setData((prev) => ({ ...prev, ...patch }));
       flashAutofilled(touched);
-      pushToast(`Autofilled ${touched.length} field${touched.length > 1 ? 's' : ''} from your voice note.`, 'success');
+      pushToast(
+        t(language, touched.length > 1 ? 'toastAutofilledMany' : 'toastAutofilledOne', { count: touched.length }),
+        'success'
+      );
     },
-    [flashAutofilled, pushToast]
+    [flashAutofilled, pushToast, language]
   );
 
   const handleVoiceError = useCallback(
@@ -172,15 +179,14 @@ export default function Home() {
   );
 
   // -------------------------------------------------------------------
-  // Actions: clear, export, print, SMS
+  // Actions: clear, export, download PDF, share PDF
   // -------------------------------------------------------------------
   function handleClearForm() {
     setData({ ...emptyInvoice, serviceDate: todayISO() });
     setErrors({});
     setAutofilled(new Set());
     setInvoiceId(generateInvoiceId());
-    setSmsState('idle');
-    pushToast('Form cleared.', 'info');
+    pushToast(t(language, 'toastFormCleared'), 'info');
   }
 
   function handleExportJson() {
@@ -210,87 +216,116 @@ export default function Home() {
 
   async function handleDownloadPdf() {
     if (!validateForPdf()) {
-      pushToast('Add the client first and last name before downloading the PDF.', 'error');
+      pushToast(t(language, 'toastPdfNeedsName'), 'error');
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
     setPdfState('generating');
     try {
-      const res = await fetch('/api/generate-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data, totals, invoiceId, generatedOn }),
-      });
-      if (!res.ok) {
-        const errorBody = await res.json().catch(() => null);
-        throw new Error(errorBody?.error || 'Could not generate the PDF.');
-      }
+      const pdfRequest = { data, totals, invoiceId, generatedOn, lang: language };
+      if (isNativeApp()) {
+        await downloadPdfClient(pdfRequest);
+      } else {
+        // On the hosted web app the server generates the PDF. If the server
+        // route is unreachable (e.g. the static export used by the app),
+        // fall back to generating it right in the browser.
+        try {
+          const res = await fetch('/api/generate-pdf', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(pdfRequest),
+          });
+          if (!res.ok) {
+            const errorBody = await res.json().catch(() => null);
+            throw new Error(errorBody?.error || t(language, 'toastPdfError'));
+          }
 
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = `${invoiceId.replace('#', '') || 'invoice'}.pdf`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      pushToast('Invoice PDF downloaded.', 'success');
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          anchor.download = `${invoiceId.replace('#', '') || t(language, 'filenameInvoice')}.pdf`;
+          document.body.appendChild(anchor);
+          anchor.click();
+          anchor.remove();
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch {
+          await downloadPdfClient(pdfRequest);
+        }
+      }
+      pushToast(t(language, 'toastPdfDownloaded'), 'success');
     } catch (error: any) {
-      pushToast(error?.message || 'Could not generate the PDF. Please try again.', 'error');
+      pushToast(error?.message || t(language, 'toastPdfRetry'), 'error');
     } finally {
       setPdfState('idle');
     }
   }
 
-  async function handleSendSms() {
-    if (!validateForSms()) {
-      pushToast('Add first name, last name, and a valid phone number to send via SMS.', 'error');
+  async function handleSharePdf() {
+    if (!validateForPdf()) {
+      pushToast(t(language, 'toastPdfNeedsName'), 'error');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    setSmsState('sending');
+    setPdfState('generating');
+    const pdfRequest = { data, totals, invoiceId, generatedOn, lang: language };
     try {
-      const res = await fetch('/api/send-sms', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          toPhoneNumber: data.phone,
-          clientName: `${data.firstName} ${data.lastName}`.trim(),
-          workSummary: data.description || 'services rendered',
-          totalDue: totals.total,
-          invoiceId,
-        }),
-      });
-      const json: SendSmsResponse = await res.json();
-
-      if (!res.ok || !json.success) {
-        throw new Error(json.error || 'Failed to send SMS.');
+      if (isNativeApp()) {
+        // In the app there is no server — open the OS share sheet with the
+        // PDF as a file (Mail, AirDrop, Messages, WhatsApp…).
+        await sharePdfClient(pdfRequest);
+        return;
       }
 
-      setSmsState('sent');
-      pushToast(`Invoice sent via SMS to ${data.phone}.`, 'success');
-      setTimeout(() => setSmsState('idle'), 4000);
-    } catch (err: any) {
-      setSmsState('error');
-      pushToast(err?.message || 'Could not send the SMS. Please try again.', 'error');
-      setTimeout(() => setSmsState('idle'), 2500);
+      if (canSharePdfWeb()) {
+        const result = await sharePdfWeb(pdfRequest);
+        // The user chose a target (or dismissed the sheet) — nothing to do.
+        if (result === 'shared' || result === 'cancelled') return;
+      }
+
+      // Desktop browsers / older devices have no file share API — fall back
+      // to downloading the PDF so the action always completes.
+      await downloadPdfClient(pdfRequest);
+      pushToast(t(language, 'toastPdfDownloaded'), 'success');
+    } catch (error: any) {
+      pushToast(error?.message || t(language, 'toastPdfRetry'), 'error');
+    } finally {
+      setPdfState('idle');
     }
   }
+
+  const languageButtonClass = (active: boolean) =>
+    `font-mono text-[10px] tracking-wide px-2 py-1 transition-colors ${
+      active ? 'bg-ink text-paper' : 'text-slate-ink hover:text-ink'
+    }`;
 
   return (
     <>
       {/* ============ TOP BAR ============ */}
       <header className="no-print sticky top-0 z-30 bg-canvas/90 backdrop-blur border-b border-rule">
+        <div className="pt-[env(safe-area-inset-top)]" aria-hidden="true" />
         <div className="max-w-[1400px] mx-auto px-5 sm:px-8 h-16 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-[6px] bg-ink flex items-center justify-center">
               <span className="font-mono text-paper text-xs font-semibold">§</span>
             </div>
-            <div className="leading-tight">
+            <div className="leading-tight hidden xs:block sm:block">
               <p className="font-display font-semibold text-[15px] tracking-tight">Ledger</p>
               <p className="font-mono text-[10px] text-slate-ink tracking-wide -mt-0.5">VOICE INVOICE MAKER</p>
+            </div>
+            <div
+              className="flex items-center rounded-[4px] border border-rule overflow-hidden ml-1"
+              role="group"
+              aria-label="Language"
+            >
+              <button type="button" onClick={() => setLanguage('en')} className={languageButtonClass(language === 'en')}>
+                EN
+              </button>
+              <button type="button" onClick={() => setLanguage('fr')} className={languageButtonClass(language === 'fr')}>
+                FR
+              </button>
             </div>
           </div>
           <div className="hidden sm:flex items-center gap-2">
@@ -298,38 +333,45 @@ export default function Home() {
               onClick={handleClearForm}
               className="font-mono text-[11px] uppercase tracking-wide px-3.5 py-2 rounded-[4px] border border-rule text-slate-ink hover:border-danger hover:text-danger transition-colors"
             >
-              Clear Form
+              {t(language, 'clearForm')}
             </button>
             <button
               onClick={handleExportJson}
               className="font-mono text-[11px] uppercase tracking-wide px-3.5 py-2 rounded-[4px] border border-rule text-ink hover:border-ink transition-colors"
             >
-              Export JSON
+              {t(language, 'exportJson')}
             </button>
             <button
               onClick={handleDownloadPdf}
               disabled={pdfState === 'generating'}
               className="bg-ledger hover:bg-ledger-dark text-paper font-mono text-[11px] uppercase tracking-wide px-4 py-2 rounded-[4px] transition-colors"
             >
-              {pdfState === 'generating' ? 'Generating PDF…' : 'Download PDF'}
+              {pdfState === 'generating' ? t(language, 'generatingPdf') : t(language, 'downloadPdf')}
             </button>
           </div>
           {/* Mobile: compact icon-only actions */}
           <div className="flex sm:hidden items-center gap-1.5">
             <button
               onClick={handleClearForm}
-              aria-label="Clear form"
+              aria-label={t(language, 'clearFormAria')}
               className="font-mono text-[10px] uppercase px-2.5 py-2 rounded-[4px] border border-rule text-slate-ink"
             >
-              Clear
+              {t(language, 'clear')}
+            </button>
+            <button
+              onClick={handleExportJson}
+              aria-label={t(language, 'exportJson')}
+              className="font-mono text-[10px] uppercase px-2.5 py-2 rounded-[4px] border border-rule text-slate-ink"
+            >
+              {t(language, 'json')}
             </button>
             <button
               onClick={handleDownloadPdf}
               disabled={pdfState === 'generating'}
-              aria-label="Download PDF"
+              aria-label={t(language, 'downloadPdfAria')}
               className="bg-ledger text-paper font-mono text-[10px] uppercase px-2.5 py-2 rounded-[4px]"
             >
-              PDF
+              {t(language, 'pdf')}
             </button>
           </div>
         </div>
@@ -352,16 +394,15 @@ export default function Home() {
           {/* RIGHT: live preview (desktop) */}
           <div className="hidden lg:block lg:sticky lg:top-24">
             <p className="no-print font-mono text-[10px] uppercase tracking-wider text-slate-ink mb-2.5 px-1">
-              Live preview
+              {t(language, 'livePreview')}
             </p>
             <InvoicePreview
               data={data}
               totals={totals}
               invoiceId={invoiceId}
               generatedOn={generatedOn}
-              smsState={smsState}
-              onSendSms={handleSendSms}
-              canSendSms={canSendSms}
+              isGeneratingPdf={pdfState === 'generating'}
+              onSharePdf={handleSharePdf}
             />
           </div>
         </div>
@@ -370,7 +411,7 @@ export default function Home() {
       {/* ============ MOBILE: floating sticky preview tab ============ */}
       <button
         onClick={() => setMobilePreviewOpen(true)}
-        className="no-print lg:hidden fixed bottom-5 right-5 z-40 bg-ink text-paper font-display font-semibold text-[13px] px-5 py-3 rounded-full shadow-lg flex items-center gap-2"
+        className="no-print lg:hidden fixed bottom-[calc(env(safe-area-inset-bottom)+20px)] right-5 z-40 bg-ink text-paper font-display font-semibold text-[13px] px-5 py-3 rounded-full shadow-lg flex items-center gap-2"
       >
         <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path
@@ -381,17 +422,17 @@ export default function Home() {
           />
           <circle cx="12" cy="12" r="2.5" stroke="currentColor" strokeWidth="2" />
         </svg>
-        Preview Invoice · {currency(totals.total)}
+        {t(language, 'previewInvoice')} · {currency(totals.total, language)}
       </button>
 
       {mobilePreviewOpen && (
         <div className="no-print lg:hidden fixed inset-0 z-50 bg-ink/40 flex flex-col justify-end">
-          <div className="bg-canvas rounded-t-[16px] max-h-[90vh] overflow-y-auto p-5 pb-8">
+          <div className="bg-canvas rounded-t-[16px] max-h-[90vh] overflow-y-auto p-5 pb-[calc(env(safe-area-inset-bottom)+2rem)]">
             <div className="flex items-center justify-between mb-4">
-              <p className="font-mono text-[10px] uppercase tracking-wider text-slate-ink">Live preview</p>
+              <p className="font-mono text-[10px] uppercase tracking-wider text-slate-ink">{t(language, 'livePreview')}</p>
               <button
                 onClick={() => setMobilePreviewOpen(false)}
-                aria-label="Close preview"
+                aria-label={t(language, 'closePreview')}
                 className="font-mono text-lg text-slate-ink"
               >
                 ×
@@ -402,9 +443,8 @@ export default function Home() {
               totals={totals}
               invoiceId={invoiceId}
               generatedOn={generatedOn}
-              smsState={smsState}
-              onSendSms={handleSendSms}
-              canSendSms={canSendSms}
+              isGeneratingPdf={pdfState === 'generating'}
+              onSharePdf={handleSharePdf}
             />
           </div>
         </div>

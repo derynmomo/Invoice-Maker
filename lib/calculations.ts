@@ -1,4 +1,5 @@
 import { InvoiceFormData, Totals } from './types';
+import type { Language } from './i18n';
 
 /**
  * Coerces any input into a safe, non-negative finite number.
@@ -12,9 +13,11 @@ export function safeNumber(value: unknown): number {
   return n < 0 ? 0 : n;
 }
 
-export function currency(value: unknown): string {
+export function currency(value: unknown, lang: Language = 'en'): string {
   const n = safeNumber(value);
-  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  const locale = lang === 'fr' ? 'fr-CA' : 'en-US';
+  const iso = lang === 'fr' ? 'CAD' : 'USD';
+  return n.toLocaleString(locale, { style: 'currency', currency: iso });
 }
 
 export function computeTotals(data: Pick<InvoiceFormData, 'hours' | 'rate' | 'materialCost' | 'taxRate'>): Totals {
@@ -40,15 +43,15 @@ export function todayISO(): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
-/** Formats an ISO date (YYYY-MM-DD) as "Aug 6, 2026" without timezone drift. */
-export function formatDateLong(dateStr: string | null | undefined): string {
+/** Formats an ISO date (YYYY-MM-DD) as "Aug 6, 2026" or "6 août 2026" without timezone drift. */
+export function formatDateLong(dateStr: string | null | undefined, lang: Language = 'en'): string {
   if (!dateStr) return '—';
   const parts = dateStr.split('-');
   if (parts.length !== 3) return '—';
   const [y, m, d] = parts.map((p) => parseInt(p, 10));
   const date = new Date(y, (m || 1) - 1, d || 1);
   if (Number.isNaN(date.getTime())) return '—';
-  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  return date.toLocaleDateString(lang === 'fr' ? 'fr-CA' : 'en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 /**
@@ -78,21 +81,6 @@ export function generateInvoiceId(date = new Date()): string {
   return `INV-${yyyy}${mm}${dd}-${suffix}`;
 }
 
-/** Validates E.164-ish phone numbers loosely (allows spaces, dashes, parens, leading +). */
-export function isValidPhone(value: string): boolean {
-  const digits = value.replace(/[^\d]/g, '');
-  return digits.length >= 10 && digits.length <= 15;
-}
-
 export function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
-}
-
-/** Normalizes a phone number to E.164 for the SMS API (defaults to +1 if no country code given). */
-export function toE164(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.startsWith('+')) return '+' + trimmed.slice(1).replace(/[^\d]/g, '');
-  const digits = trimmed.replace(/[^\d]/g, '');
-  if (digits.length === 10) return '+1' + digits; // assume NANP if no country code
-  return '+' + digits;
 }

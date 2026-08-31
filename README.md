@@ -1,8 +1,10 @@
 # Ledger — Voice-Enabled Invoice Maker
 
 A Next.js 14 (App Router) invoice builder with a live dual-pane preview, no-cost
-browser speech recognition, local invoice-field extraction, one-click SMS delivery via Twilio,
-and direct PDF download.
+browser speech recognition, local invoice-field extraction, and one-click PDF
+generation shared through the OS share sheet. Also packaged as a native
+**iOS + Android app** (Capacitor) with on-device speech recognition — see
+[MOBILE.md](MOBILE.md) for the build and App Store / Google Play submission steps.
 
 ## 1. Stack
 
@@ -12,8 +14,8 @@ and direct PDF download.
 | Styling | Tailwind CSS |
 | Speech-to-text | Browser `SpeechRecognition` / `webkitSpeechRecognition` |
 | Field extraction | Deterministic local TypeScript parser (no API call) |
-| SMS delivery | Twilio |
-| PDF generation | `pdf-lib` on the server |
+| PDF generation | `pdf-lib` on the server (web) / in the browser (app) |
+| Sharing | OS share sheet — `@capacitor/share` (app) / Web Share API (web) |
 | Fonts | Space Grotesk (display), Inter (body), IBM Plex Mono (financial figures) |
 
 ## 2. Project structure
@@ -25,19 +27,21 @@ invoice-maker/
 │  ├─ layout.tsx                # Root layout, font loading
 │  ├─ globals.css               # Design tokens + print (@media print) styles
 │  └─ api/
-│     ├─ generate-pdf/route.ts  # POST invoice → downloadable PDF
-│     └─ send-sms/route.ts      # POST invoice summary → Twilio SMS
+│     └─ generate-pdf/route.ts  # POST invoice → downloadable PDF
 ├─ components/
 │  ├─ InvoiceForm.tsx           # Sections 1–4 + validation + tax presets
-│  ├─ InvoicePreview.tsx        # Live invoice + "Send via SMS" action
-│  ├─ VoiceWidget.tsx           # Browser speech recognition UI
+│  ├─ InvoicePreview.tsx        # Live invoice + "Share PDF" action
+│  ├─ VoiceWidget.tsx           # Speech recognition UI (native or browser)
 │  ├─ Stepper.tsx               # +/- quick-adjust control
 │  └─ Toast.tsx                 # Toast notifications
 ├─ lib/
 │  ├─ types.ts                  # Shared client/server types
 │  ├─ localVoiceParser.ts       # Local transcript → invoice fields
+│  ├─ speech.ts                 # Unified speech engine (native + web)
+│  ├─ mobile.ts                 # Client-side PDF, download + share-sheet
 │  └─ calculations.ts           # safeNumber/currency/computeTotals/etc.
-├─ .env.example
+├─ assets/                      # App icon + splash sources (scripts/generate-assets.js)
+├─ ios/  android/               # Capacitor native projects (npm run sync)
 └─ package.json
 ```
 
@@ -46,26 +50,6 @@ invoice-maker/
 ```bash
 cd invoice-maker
 npm install
-cp .env.example .env.local
-```
-
-Fill in `.env.local`:
-
-```
-TWILIO_ACCOUNT_SID=AC...
-TWILIO_AUTH_TOKEN=...
-SMS_SENDER_NUMBER=+15555550123
-```
-
-- **TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN** — from the Twilio console. Twilio's auth model
-  needs both, not a single "API key" — that's why there are two variables instead of the
-  single `SMS_API_KEY` some briefs mention.
-- **SMS_SENDER_NUMBER** — a phone number you've purchased/verified in Twilio, in E.164 format
-  (`+1...`).
-
-Run it:
-
-```bash
 npm run dev
 # open http://localhost:3000
 ```
@@ -103,13 +87,21 @@ an attachment. "Download PDF" sends the current invoice data to that route and d
 result directly, without depending on the browser print dialog. Client first and last name are
 required; email remains optional.
 
-## 7. SMS delivery
+## 7. Sharing the invoice
 
-`POST /api/send-sms` validates the phone number, normalizes it to E.164 (assumes `+1` if no
-country code was given), builds a short message (client name, work summary truncated to
-140 chars, formatted total, optional pay link from `NEXT_PUBLIC_INVOICE_BASE_URL`), and sends
-it with the Twilio Node SDK. The client shows a spinner while in flight and a toast on success
-or failure — Twilio credential/config errors surface as a clear toast rather than a crash.
+There is no app-owned messaging backend — sharing hands the finished PDF to the
+OS so the user can send it however they like.
+
+- **Native app (iOS/Android)**: `lib/mobile.ts` generates the PDF client-side
+  with `pdf-lib`, writes it to a temp file with `@capacitor/filesystem`, and
+  calls `Share.share({ files })` — the system share sheet appears (AirDrop,
+  Mail, Messages, WhatsApp, etc.).
+- **Hosted web / PWA**: the Web Share API (`navigator.share({ files })`) opens
+  the phone's share sheet on iOS/Android. On browsers without file sharing
+  (most desktop setups), the button falls back to a plain PDF download.
+
+The same PDF is produced on every path (identical input → identical file), so
+"Download PDF" and "Share PDF" never diverge.
 
 ## 8. Notes & known trade-offs
 

@@ -1,5 +1,8 @@
 'use client';
 
+import { useLanguage } from './LanguageContext';
+import { t } from '@/lib/i18n';
+
 export interface ToastMessage {
   id: number;
   text: string;
@@ -18,20 +21,21 @@ const toneStyles: Record<ToastMessage['tone'], string> = {
 };
 
 export default function ToastContainer({ toasts, onDismiss }: ToastContainerProps) {
+  const { language } = useLanguage();
   if (toasts.length === 0) return null;
 
   return (
-    <div className="no-print fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-[92%] max-w-sm">
-      {toasts.map((t) => (
+    <div className="no-print fixed bottom-5 left-1/2 -translate-x-1/2 z-50 flex flex-col gap-2 w-[92%] max-w-sm mb-[env(safe-area-inset-bottom)]">
+      {toasts.map((toast) => (
         <div
-          key={t.id}
+          key={toast.id}
           role="status"
-          className={`${toneStyles[t.tone]} border-l-4 rounded-[6px] px-4 py-3 text-[13px] font-body shadow-lg flex items-start justify-between gap-3 animate-[fadeIn_.15s_ease-out]`}
+          className={`${toneStyles[toast.tone]} border-l-4 rounded-[6px] px-4 py-3 text-[13px] font-body shadow-lg flex items-start justify-between gap-3 animate-[fadeIn_.15s_ease-out]`}
         >
-          <span className="leading-snug">{t.text}</span>
+          <span className="leading-snug">{toast.text}</span>
           <button
-            onClick={() => onDismiss(t.id)}
-            aria-label="Dismiss notification"
+            onClick={() => onDismiss(toast.id)}
+            aria-label={t(language, 'dismissAria')}
             className="font-mono text-paper/60 hover:text-paper shrink-0"
           >
             ×

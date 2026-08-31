@@ -1,0 +1,39 @@
+name: CI
+on: [push, pull_request]
+
+permission:
+  contents: read
+  pull-requests: write
+  
+jobs:
+  secrets:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    name: Lint, typecheck, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+          cache: npm
+      - run: npm ci
+      # Dependency vulnerability scan. Currently reports known, documented
+      # issues (see SECURITY.md "Dependency vulnerabilities"); run with
+      # continue-on-error so it annotates every run without blocking while
+      # those are tracked. Any NEW vulnerability will appear here each push.
+      - name: Audit dependencies for known vulnerabilities
+        run: npm audit --audit-level=high
+        continue-on-error: true
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build

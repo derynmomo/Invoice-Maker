@@ -1,0 +1,61 @@
+diff --git a/node_modules/@capacitor-community/speech-recognition/Package.swift b/node_modules/@capacitor-community/speech-recognition/Package.swift
+new file mode 100644
+index 0000000..ecc6cff
+--- /dev/null
++++ b/node_modules/@capacitor-community/speech-recognition/Package.swift
+@@ -0,0 +1,27 @@
++// swift-tools-version: 5.9
++import PackageDescription
++
++// Added by the Ledger project (see patches/) so Capacitor's SPM integration
++// links this plugin into the iOS app. The upstream package only ships a
++// CocoaPods podspec.
++let package = Package(
++    name: "CapacitorCommunitySpeechRecognition",
++    platforms: [.iOS(.v14)],
++    products: [
++        .library(
++            name: "CapacitorCommunitySpeechRecognition",
++            targets: ["SpeechRecognitionPlugin"])
++    ],
++    dependencies: [
++        .package(url: "https://github.com/ionic-team/capacitor-swift-pm.git", from: "8.0.0")
++    ],
++    targets: [
++        .target(
++            name: "SpeechRecognitionPlugin",
++            dependencies: [
++                .product(name: "Capacitor", package: "capacitor-swift-pm")
++            ],
++            path: "ios/Plugin",
++            sources: ["Plugin.swift"])
++    ]
++)
+\ No newline at end of file
+diff --git a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift b/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift
+index 5d1b35b..f682e41 100644
+--- a/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift
++++ b/node_modules/@capacitor-community/speech-recognition/ios/Plugin/Plugin.swift
+@@ -3,7 +3,21 @@ import Capacitor
+ import Speech
+ 
+ @objc(SpeechRecognition)
+-public class SpeechRecognition: CAPPlugin {
++public class SpeechRecognition: CAPPlugin, CAPBridgedPlugin {
++    public let identifier = "SpeechRecognition"
++    public let jsName = "SpeechRecognition"
++    public let pluginMethods: [CAPPluginMethod] = [
++        CAPPluginMethod(name: "available", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "getSupportedLanguages", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "hasPermission", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "isListening", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "requestPermission", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "checkPermissions", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "requestPermissions", returnType: CAPPluginReturnPromise),
++        CAPPluginMethod(name: "removeAllListeners", returnType: CAPPluginReturnPromise)
++    ]
+ 
+     let defaultMatches = 5
+     let messageMissingPermission = "Missing permission"

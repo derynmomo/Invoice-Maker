@@ -4,6 +4,8 @@ import { ChangeEvent } from 'react';
 import clsx from 'clsx';
 import Stepper from './Stepper';
 import VoiceWidget from './VoiceWidget';
+import { useLanguage } from './LanguageContext';
+import { t } from '@/lib/i18n';
 import type { ExtractedInvoiceFields, InvoiceFormData } from '@/lib/types';
 
 interface InvoiceFormProps {
@@ -20,7 +22,7 @@ const TAX_PRESETS: Array<{ label: string; value: InvoiceFormData['taxPreset']; r
   { label: '0%', value: '0', rate: 0 },
   { label: '5%', value: '5', rate: 5 },
   { label: '10%', value: '10', rate: 10 },
-  { label: 'Custom', value: 'custom', rate: null },
+  { label: '', value: 'custom', rate: null },
 ];
 
 export default function InvoiceForm({
@@ -32,6 +34,7 @@ export default function InvoiceForm({
   onVoiceExtracted,
   onVoiceError,
 }: InvoiceFormProps) {
+  const { language } = useLanguage();
   const fieldClass = (field: keyof InvoiceFormData) =>
     clsx('w-full py-2 text-[15px] mt-1', autofilled.has(field) && 'field-autofilled');
 
@@ -56,10 +59,10 @@ export default function InvoiceForm({
     <form className="bg-white/60 border border-rule rounded-[10px] p-6 sm:p-8 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto form-scroll no-print" noValidate>
       {/* Section 1: Client */}
       <fieldset className="mb-7">
-        <legend className="section-index mb-3">01 — CLIENT INFORMATION</legend>
+        <legend className="section-index mb-3">{t(language, 'sectionClient')}</legend>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="field-label" htmlFor="firstName">First name *</label>
+            <label className="field-label" htmlFor="firstName">{t(language, 'firstNameLabel')}</label>
             <input
               required
               id="firstName"
@@ -73,7 +76,7 @@ export default function InvoiceForm({
             {errors.firstName && <p className="text-[11px] text-danger mt-1">{errors.firstName}</p>}
           </div>
           <div>
-            <label className="field-label" htmlFor="lastName">Last name *</label>
+            <label className="field-label" htmlFor="lastName">{t(language, 'lastNameLabel')}</label>
             <input
               required
               id="lastName"
@@ -91,12 +94,11 @@ export default function InvoiceForm({
 
       {/* Section 2: Contact */}
       <fieldset className="mb-7">
-        <legend className="section-index mb-3">02 — CONTACT INFORMATION</legend>
+        <legend className="section-index mb-3">{t(language, 'sectionContact')}</legend>
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label className="field-label" htmlFor="phone">Phone (with country code) *</label>
+            <label className="field-label" htmlFor="phone">{t(language, 'phoneLabel')}</label>
             <input
-              required
               id="phone"
               type="tel"
               placeholder="+1 514 555 0134"
@@ -106,10 +108,9 @@ export default function InvoiceForm({
               className={fieldClass('phone')}
             />
             {errors.phone && <p className="text-[11px] text-danger mt-1">{errors.phone}</p>}
-            <p className="text-[10.5px] text-slate-ink mt-1">Required to send the invoice via SMS.</p>
           </div>
           <div>
-            <label className="field-label" htmlFor="email">Email (optional)</label>
+            <label className="field-label" htmlFor="email">{t(language, 'emailLabel')}</label>
             <input
               required
               id="email"
@@ -130,9 +131,9 @@ export default function InvoiceForm({
 
       {/* Section 3: Service Details */}
       <fieldset className="mb-7">
-        <legend className="section-index mb-3">03 — SERVICE DETAILS</legend>
+        <legend className="section-index mb-3">{t(language, 'sectionService')}</legend>
         <div className="mb-4">
-          <label className="field-label" htmlFor="serviceDate">Date of service</label>
+          <label className="field-label" htmlFor="serviceDate">{t(language, 'dateLabel')}</label>
           <input
             id="serviceDate"
             type="date"
@@ -142,11 +143,11 @@ export default function InvoiceForm({
           />
         </div>
         <div>
-          <label className="field-label" htmlFor="description">Description of work</label>
+          <label className="field-label" htmlFor="description">{t(language, 'descriptionLabel')}</label>
           <textarea
             id="description"
             rows={3}
-            placeholder="Replaced kitchen faucet, resealed sink basin, tested for leaks."
+            placeholder={t(language, 'descriptionPlaceholder')}
             value={data.description}
             onChange={handleText('description')}
             className={clsx(fieldClass('description'), 'resize-none')}
@@ -156,10 +157,10 @@ export default function InvoiceForm({
 
       {/* Section 4: Financial Details */}
       <fieldset className="mb-2">
-        <legend className="section-index mb-3">04 — FINANCIAL DETAILS</legend>
+        <legend className="section-index mb-3">{t(language, 'sectionFinancial')}</legend>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
           <div>
-            <label className="field-label" htmlFor="hours">Hours worked</label>
+            <label className="field-label" htmlFor="hours">{t(language, 'hoursLabel')}</label>
             <div className="flex items-center gap-2 mt-1">
               <input
                 id="hours"
@@ -175,12 +176,12 @@ export default function InvoiceForm({
                 value={data.hours}
                 step={0.25}
                 onChange={(v) => onChange({ hours: v })}
-                ariaLabel="hours worked"
+                ariaLabel={t(language, 'stepperHoursAria')}
               />
             </div>
           </div>
           <div>
-            <label className="field-label" htmlFor="rate">Hourly rate ($)</label>
+            <label className="field-label" htmlFor="rate">{t(language, 'rateLabel')}</label>
             <div className="flex items-center gap-2 mt-1">
               <input
                 id="rate"
@@ -192,11 +193,11 @@ export default function InvoiceForm({
                 onChange={handleNumber('rate')}
                 className={clsx(fieldClass('rate'), 'font-mono tabular !mt-0')}
               />
-              <Stepper value={data.rate} step={5} onChange={(v) => onChange({ rate: v })} ariaLabel="hourly rate" />
+              <Stepper value={data.rate} step={5} onChange={(v) => onChange({ rate: v })} ariaLabel={t(language, 'stepperRateAria')} />
             </div>
           </div>
           <div>
-            <label className="field-label" htmlFor="materialCost">Material cost ($)</label>
+            <label className="field-label" htmlFor="materialCost">{t(language, 'materialLabel')}</label>
             <div className="flex items-center gap-2 mt-1">
               <input
                 id="materialCost"
@@ -212,7 +213,7 @@ export default function InvoiceForm({
                 value={data.materialCost}
                 step={10}
                 onChange={(v) => onChange({ materialCost: v })}
-                ariaLabel="material cost"
+                ariaLabel={t(language, 'stepperMaterialAria')}
               />
             </div>
           </div>
@@ -220,7 +221,7 @@ export default function InvoiceForm({
 
         <div className="bg-canvas border border-rule rounded-[6px] px-4 py-3">
           <div className="flex items-center justify-between mb-2.5">
-            <label className="field-label !text-ink">Tax rate</label>
+            <label className="field-label !text-ink">{t(language, 'taxLabel')}</label>
             {data.taxPreset === 'custom' && (
               <div className="flex items-center gap-1.5">
                 <input
@@ -249,7 +250,7 @@ export default function InvoiceForm({
                     : 'bg-transparent text-slate-ink border-rule hover:border-ink hover:text-ink'
                 )}
               >
-                {preset.label}
+                {preset.value === 'custom' ? t(language, 'taxPresetCustom') : preset.label}
               </button>
             ))}
           </div>
